@@ -1,18 +1,61 @@
-name: Offline Unit Tests
+name: Test and publish Stock Radar
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra server --python 3.12
+      - run: |
+          .venv/bin/python -m compileall -q backend src scripts tests
+          .venv/bin/python -m unittest discover -s tests -v
+          .venv/bin/python scripts/market_probe.py --provider demo --output /tmp/probe-demo.json
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          python-version: '3.11'
-      - name: Syntax and deterministic tests only (never call real market API)
-        run: |
-          python -m compileall -q scripts src tests
-          python -m unittest discover -s tests -v
-          python scripts/market_probe.py --provider demo --output /tmp/stock_radar_demo.json
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: frontend/dist
+
+  publish:
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    steps:
+      - id: publish
+        uses: actions/deploy-pages@v4

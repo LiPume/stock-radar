@@ -1,34 +1,47 @@
 # 持仓雷达 · Stock Radar
 
-> 个人持仓 RSI 卖出风险监控系统。**手工选股和买入，自动监测已持有股票，出现规则信号时提醒，不自动交易。**
+登记自己持有的 A/B 股，按前复权收盘日线计算 RSI6、RSI12、RSI24。RSI6 首次突破 80 产生关注信号，RSI6 在高位下穿 RSI12 产生重点预警。新事件才进入微信合并投递，行情失败会单独标记。
 
-文档版本：2026-11-20 / V0.1 项目初始化包。**本包是详细设计与项目脚手架，不是已经上线的股票监控产品。**
+[GitHub Pages 手机前端](https://lipume.github.io/stock-radar/) · [源码](https://github.com/LiPume/stock-radar) · [本机应用](http://127.0.0.1:8765/stock-radar/)
 
-## 先做什么
+## 在本机使用
 
-1. **先读** [`docs/00_项目导览.md`](docs/00_项目导览.md)，然后是 [`docs/01_需求分析_PRD.md`](docs/01_需求分析_PRD.md) 与 [`docs/02_概要设计_HLD.md`](docs/02_概要设计_HLD.md)。
-2. **先探测数据**：在 Codex 中运行 [`prompts/01_Codex_数据接口测试.md`](prompts/01_Codex_数据接口测试.md)，不要先写完整前端。项目里已经提供可以独立运行的 `scripts/market_probe.py`。
-3. 获取同花顺金融数据服务 API Key：<https://fuyao.aicubes.cn/admin/>；复制 `.env.example` 为 `.env`，只在本机/云端填入实际 Key。**不要把密钥放进 GitHub。**
-4. 待 A/B 股接口真实返回通过验证后，再向 Codex 提交 [`prompts/02_Codex_完整系统实现.md`](prompts/02_Codex_完整系统实现.md)。
-5. 上线前使用 [`docs/05_测试与验收.md`](docs/05_测试与验收.md) 和 [`prompts/03_Codex_验收检查.md`](prompts/03_Codex_验收检查.md)。
+需要 Python 3.11+、uv 和 Node 22.12+。在仓库根目录安装锁定依赖，构建 PWA。
 
-## 当前具备的内容
+```sh
+uv sync --locked --python 3.12 --extra server --extra probe
+npm --prefix frontend ci
+npm --prefix frontend run build
+```
 
-- 详细 PRD、系统概要架构、RSI 规则、数据接口调研、测试计划、部署运维方案、需求决策记录；
-- 3 份可直接发给 Codex 的 Markdown Prompt；
-- **可执行的同花顺 REST / AKShare B 股接口测试脚本**，支持离线演示，无需依赖同花顺凭据即可先验证测试流程；
-- 独立 RSI 指标及高位死叉规则的参考 Python 实现和单元测试；
-- 后端/前端目录、GitHub CI 和环境变量模板；
-- `.gitignore` 排除了密钥、运行数据、数据库、日志与检测报告。
+首次使用时，将 `.env.example` 复制到 `.env` 并填写所需后端变量。已有配置可直接沿用。运行密码设置程序，在本机终端输入自己的密码；Mac 也可双击 `scripts/设置本机登录密码.command`。只有 Argon2id 哈希写入 `data/admin.hash`。
 
-**尚未具备**：可供用户打开的正式网页、已授权的真实行情、长期运行的后台和微信自动推送。Codex 按分阶段 Prompt 完成后才具备这些功能。
+```sh
+.venv/bin/python scripts/admin_password.py
+.venv/bin/python -m uvicorn backend.app.main:app --env-file .env --host 127.0.0.1 --port 8765 --workers 1
+```
+
+打开本机应用，登录后添加持仓、确认市场并点击“立即检测”。首次启动为空列表。收盘后 15:45 自动检测需要后端持续运行；陈旧行情于 16:15、16:45 有限重试。微信通道需要后端配置 `SERVERCHAN_SENDKEY` 并在设置中启用。数据日期、上次检测、单股错误和消息回执可在页面查看。双重顶、顶背离保留扩展接口。
+
+## 部署与验证
+
+GitHub Actions 运行 Python 单测及前端 lint、类型检查和构建，全部通过后发布 Pages。手机远程登录需要自有 HTTPS 后端以及仓库 Actions 变量 `VITE_API_BASE_URL`（完整 API 根地址，结尾为 `/api/v1`）。无后端地址时，公开站点说明连接状态并关闭密码输入。部署、CORS、备份和恢复步骤见[运维指南](docs/06_部署安全运维.md)，微信投递行为见[调度与通知](docs/调度与通知.md)。
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+npm --prefix frontend run lint
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+```
+
+两次真实数据验证均对三只公开样本各取得 162 根前复权日线，最新收盘日为 2026-11-20。后台联调使用独立临时库，最近三个交易日的全部 27 个 RSI 与第一阶段一致。终端截图逐数对齐、真实微信收件和目标手机安装仍待验收。[阶段验收记录](docs/08_交付检查记录.md)
 
 ## 一分钟本地验证
 
-运行环境：Python 3.10+。
+运行于项目虚拟环境。
 
 ```bash
-python scripts/market_probe.py --provider demo
+python scripts/market_probe.py --provider demo --output reports/demo.json
 python scripts/demo_rsi.py
 python -m unittest discover -s tests -v
 ```
@@ -49,33 +62,5 @@ python scripts/market_probe.py --provider akshare-b --b 900901.SH --days 240
 
 也可用 `--provider all` 同时检测两类。默认报告写入 `reports/probe_result.json`（已被 Git 忽略）。
 
-## 总体架构
 
-```text
-手机 PWA（Vue 3 / TS / Vite / Vant / ECharts）
-       │ HTTPS · 登录鉴权
-       ▼
-FastAPI 服务端 ── SQLite（持仓、K线、信号、通知记录）
-       │
-       ├── A 股 → 同花顺金融数据 REST API（**需要实测账号权限**）
-       ├── B 股 → AKShare（**需要实测稳定性**）
-       ├── RSI6 / RSI12 / RSI24 + 风险规则
-       └── APScheduler 定时检查 → Server酱 → 微信通知
-
-前端：GitHub Pages（或可替代静态站点）
-后端：常驻 Python 服务（不能托管到 GitHub Pages）
-```
-
-## 关键边界
-
-- 「RSI 超买」不是「RSI 超卖」。本系统监控 **RSI6 上破 80、高位死叉**；双重顶与顶背离作为后续进阶规则。
-- RSI 信号是**风险预警**，不等于确定卖出或自动交易。
-- 微信消息不保证每条实时到达；供应商 API、行情更新和网络故障必须有可见状态。
-- 项目为私人辅助工具。未设计任何公开荐股、代客理财或交易下单功能。
-
-## 参考文档
-
-- 同花顺快速开始：<https://fuyao.aicubes.cn/docs/quickstart/>
-- 同花顺 A 股行情 API：<https://fuyao.aicubes.cn/docs/api-reference/prices/>
-- AKShare B 股接口：<https://akshare.akfamily.xyz/data/stock/stock.html>（镜像亦可参考 `<https://akshare-hh.readthedocs.io/en/latest/data/stock/stock.html>`）
-- Server酱：<https://sct.ftqq.com/docs/getting-started/faq/>
+[需求、设计与项目导览](docs/00_项目导览.md)
