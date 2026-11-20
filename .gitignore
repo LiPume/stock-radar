@@ -1,0 +1,49 @@
+# Secrets
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+*.pem
+*.key
+*sendkey*
+
+# Runtime data / personal holdings / market reports
+reports/*
+!reports/.gitkeep
+data/*
+!data/samples/
+data/samples/*
+!data/samples/.gitkeep
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.csv
+*.parquet
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+coverage/
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+
+# Local execution notes
+/task_plan.md
+/notes.md
