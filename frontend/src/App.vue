@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Icon as VanIcon, Switch as VanSwitch, showConfirmDialog } from 'vant'
+import QuoteSummary from './QuoteSummary.vue'
+import MonitoringStatus from './MonitoringStatus.vue'
+import MonitoringHistory from './MonitoringHistory.vue'
 import LoginPanel from './LoginPanel.vue'
 import HoldingForm from './HoldingForm.vue'
 import {
@@ -27,6 +30,7 @@ const loading = ref(false),
   checking = ref(false),
   saving = ref(false),
   online = ref(navigator.onLine)
+const historyRevision = ref(0)
 const holdings = ref<Holding[]>([]),
   signals = ref<Signal[]>([]),
   health = ref<Health | null>(null)
@@ -130,6 +134,7 @@ async function sync() {
       api<Settings>('/settings'),
     ])
     if (!signed.value || version !== syncVersion) return
+    historyRevision.value++
     holdings.value = h
     signals.value = s
     health.value = state
@@ -254,14 +259,11 @@ async function saveOptions() {
   error.value = ''
   note.value = ''
   try {
-    const value = await api<Settings>('/settings', 'PUT', {
-      overbought: settingsDraft.value.overbought,
-      high_level: settingsDraft.value.high_level,
-      notifications_enabled: settingsDraft.value.notifications_enabled,
-    })
+    const value = await api<Settings>('/settings', 'PUT', settingsDraft.value)
     if (signed.value) {
       settings.value = value
       settingsDraft.value = { ...value }
+      await sync()
       note.value = '设置已保存'
     }
   } catch (e) {
@@ -388,15 +390,16 @@ onBeforeUnmount(() => {
             <a v-for="h in list" :key="h.id" class="stock panel" :href="'#/stock/' + h.symbol">
               <div class="sectionTitle">
                 <div>
-                  <h3>{{ h.display_name || h.symbol }}</h3>
+                  <h3>{{ h.security_name || h.display_name || h.symbol }}</h3>
                   <span class="ticker">{{ h.symbol }} · {{ h.market }} 股</span>
                 </div>
                 <span class="tag" :class="badge(h)[0]">{{ badge(h)[1] }}</span>
               </div>
+              <QuoteSummary :holding="h" />
               <div class="readings">
                 <div v-for="k in ['rsi6', 'rsi12', 'rsi24'] as const" :key="k">
                   <small>{{ k.toUpperCase() }}</small
-                  ><b>{{ numberText(h[k]) }}</b>
+                  ><b>{{ numberText(h.price_context === 'LAST_CLOSE' ? h.close_rsi?.[k] : h[k]) }}</b>
                 </div>
               </div>
               <div class="stockFoot">
@@ -431,6 +434,7 @@ onBeforeUnmount(() => {
                     : '—'
                 }}</b>
               </div>
+              <MonitoringStatus v-if="health" :health="health" />
               <button class="linkBtn" @click="go('/settings')">查看设置 <van-icon aria-hidden="true" name="arrow" /></button>
             </div>
           </aside>
@@ -442,18 +446,19 @@ onBeforeUnmount(() => {
         <template v-if="detail">
           <div class="pageHead">
             <div>
-              <h1>{{ detail.display_name || detail.symbol }}</h1>
+              <h1>{{ detail.security_name || detail.display_name || detail.symbol }}</h1>
               <p>{{ detail.symbol }} · {{ detail.market }} 股</p>
             </div>
             <button class="secondary" @click="edit(detail)"><van-icon aria-hidden="true" name="edit" />编辑</button>
           </div>
           <section class="panel side detailTop">
             <span class="tag" :class="badge(detail)[0]">{{ badge(detail)[1] }}</span>
+            <QuoteSummary :holding="detail" />
             <p v-if="detail.reason">{{ detail.reason }}</p>
             <div class="readings">
               <div v-for="k in ['rsi6', 'rsi12', 'rsi24'] as const" :key="k">
                 <small>{{ k.toUpperCase() }}</small
-                ><b>{{ numberText(detail[k]) }}</b>
+                ><b>{{ numberText(detail.price_context === 'LAST_CLOSE' ? detail.close_rsi?.[k] : detail[k]) }}</b>
               </div>
             </div>
             <p class="meta">
@@ -466,7 +471,10 @@ onBeforeUnmount(() => {
             {{ detailError }} <button class="linkBtn" @click="loadDetail">重试</button>
           </p>
           <p v-else-if="detailBusy">正在读取日线…</p>
-          <stock-chart v-else-if="detailBars.length" :bars="detailBars" />
+          <template v-else-if="detailBars.length">
+            <p v-if="detail.price_context === 'INTRADAY'" class="meta">下图使用正式收盘日线。最新盘中指标见上方。</p>
+            <stock-chart :bars="detailBars" />
+          </template>
           <p v-else class="panel side mutedText">尚无已校验日线，可在总览发起检测。</p>
           <section class="panel side">
             <h2>信号历史</h2>
@@ -490,36 +498,18 @@ onBeforeUnmount(() => {
         <div class="pageHead">
           <div>
             <h1>信号记录</h1>
-            <p>按时间查看最近 100 条触发记录</p>
+            <p>查看收盘信号、盘中变化和微信简报</p>
           </div>
           <button class="secondary" @click="sync">刷新</button>
         </div>
-        <div v-if="!signals.length && !loading && !error" class="empty panel">
-          <div class="emptyIcon"><van-icon aria-hidden="true" name="bell" /></div>
-          <h3>暂无信号记录</h3>
-          <p>收盘日线触发规则后，记录将在此显示。</p>
-        </div>
-        <div
-          v-for="s in signals"
-          :key="[s.holding_id, s.bar_date, s.rule_code, s.strategy_version].join('-')"
-          class="panel eventRow"
-        >
-          <div>
-            <h3>{{ ruleText(s.rule_code) }}</h3>
-            <p>{{ s.symbol }} · {{ s.bar_date }}</p>
-            <small>{{ fmtEvidence(s.evidence) }}</small>
-          </div>
-          <span class="tag" :class="s.rule_code === 'RSI_HIGH_DEATH_CROSS' ? 'alert' : 'watch'">{{
-            s.rule_code === 'RSI_HIGH_DEATH_CROSS' ? '重点预警' : '关注'
-          }}</span>
-        </div>
+        <MonitoringHistory :signals="signals" :revision="historyRevision" />
       </template>
 
       <template v-else-if="route === '/settings'">
         <div class="pageHead">
           <div>
             <h1>设置</h1>
-            <p>管理 RSI 阈值与微信通知</p>
+            <p>管理检测时段、风险阈值与推送额度</p>
           </div>
         </div>
         <div class="layout" v-if="settingsDraft && health">
@@ -546,14 +536,27 @@ onBeforeUnmount(() => {
             /></label>
             <p>前日 RSI6 达到门槛，当日 RSI6 下穿 RSI12，产生重点预警。</p>
             <div class="line">
-              <span>新信号微信通知</span
+              <span>微信通知总开关</span
               ><van-switch
                 v-model="settingsDraft.notifications_enabled"
                 size="24px"
-                aria-label="新信号微信通知"
+                aria-label="微信通知总开关"
               />
             </div>
             <p v-if="!health.notification_configured">需在后端配置 Server酱 SendKey。</p>
+            <template v-if="health.version">
+              <h2>盘中监控</h2>
+              <div class="line"><span>自动盘中检测</span><van-switch v-model="settingsDraft.intraday_enabled" :disabled="!health.plan?.intraday_validated" size="24px" aria-label="自动盘中检测" /></div>
+              <p v-if="!health.plan?.intraday_validated">等待交易时段行情与复权核验。此期间简报逐只列出最近有效收盘及日期。</p>
+              <label>检测间隔<select v-model.number="settingsDraft.interval_minutes"><option v-for="m in [15,30,60]" :key="m" :value="m">{{ m }} 分钟</option></select></label>
+              <label>每个行情源每日 HTTP 请求上限<input v-model.number="settingsDraft.api_daily_limit" type="number" min="1" max="10000" required /></label>
+              <h2>简报与即时提醒</h2>
+              <div class="line"><span>交易日持仓简报</span><van-switch v-model="settingsDraft.brief_enabled" size="24px" aria-label="交易日持仓简报" /></div>
+              <label>简报时间（上海）<input v-model="settingsDraft.brief_time" type="time" min="09:30" max="14:59" required /></label>
+              <div class="line"><span>重点风险即时提醒</span><van-switch v-model="settingsDraft.urgent_enabled" size="24px" aria-label="重点风险即时提醒" /></div>
+              <div class="line"><span>普通超买关注提醒</span><van-switch v-model="settingsDraft.watch_enabled" size="24px" aria-label="普通超买关注提醒" /></div>
+              <label>每日微信额度<input v-model.number="settingsDraft.message_daily_limit" type="number" min="1" max="10000" required /></label>
+            </template>
             <button class="primary" :disabled="saving">{{ saving ? '正在保存…' : '保存设置' }}</button>
           </form>
           <aside class="panel side">

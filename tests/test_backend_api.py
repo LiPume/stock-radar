@@ -74,7 +74,9 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(self.client.get("/api/v1/holdings").json()["data"][0]["enabled"])
         with self.app.state.db.engine.connect() as c:
             self.assertEqual(c.scalar(text("PRAGMA journal_mode")), "wal")
-            self.assertEqual(c.scalar(text("select version_num from alembic_version")), "0001")
+            from alembic.script import ScriptDirectory
+            latest = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "backend/migrations")).get_current_head()
+            self.assertEqual(c.scalar(text("select version_num from alembic_version")), latest)
 
     def test_charts_are_ordered_and_old_quotes_are_labelled(self):
         self.login()

@@ -17,7 +17,7 @@ from scripts import market_probe as probe
 def failure_reason(error: Exception) -> str:
     # market_probe emits sanitized categories. Never echo arbitrary upstream bodies.
     message = str(error)
-    for prefix in ("AUTH", "API_ERROR code=", "HTTP_ERROR", "NETWORK_UNAVAILABLE",
+    for prefix in ("REQUEST_BUDGET:", "SOURCE_PAUSED:", "RATE_LIMIT:", "AUTH", "API_ERROR code=", "HTTP_ERROR", "NETWORK_UNAVAILABLE",
                    "EMPTY", "SCHEMA_CHANGED", "DEPENDENCY_MISSING", "UPSTREAM_ERROR"):
         if message.startswith(prefix):
             return message[:180]
@@ -64,6 +64,68 @@ def fetch_history(stocks: Sequence[tuple[str, str]], start: date, end: date
             yield symbol, [], failure_reason(exc)
         else:
             yield symbol, rows, None
+
+
+def run_metered_b(meter, symbols, **params):
+    job = dict(database=meter.db.engine.url.render_as_string(hide_password=False),
+               symbols=symbols, now=meter.now.isoformat(), operation=meter.operation,
+               priority=meter.priority, **params)
+    try:
+        completed = subprocess.run([sys.executable, "-m", "backend.app.market_worker"],
+            input=json.dumps(job), text=True, capture_output=True, timeout=45, check=True)
+        reply = json.loads(completed.stdout)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError):
+        raise RuntimeError("NETWORK_UNAVAILABLE: B 股行情工作进程中断") from None
+    if "error" in reply:
+        raise RuntimeError(reply["error"])
+    return reply["result"]
+
+
+def get_history(db, stocks, start, end, now, priority):
+    """Production daily path: shared ledger, one physical budget across operations."""
+    from .market_usage import Meter
+    a = [symbol for symbol, market in stocks if market == "A"]
+    key = os.getenv("HITHINK_FINANCE_API_KEY", "").strip()
+    for i in range(0,len(a),10):
+        batch=a[i:i+10]
+        meter=Meter(db,"hithink",now,priority,"close")
+        meter.log("QUERY",len(batch))
+        try:
+            if not key:
+                raise RuntimeError("AUTH: 缺少行情凭据")
+            def get_batch():
+                payload, _ = probe.fetch_hithink(batch,start,end,key)
+                if payload.get("code") in (2001,2003,4001):
+                    code = payload["code"]
+                    raise probe.ProbeFailure(f"API_ERROR code={code}",api_code=code)
+                return probe.convert_hithink_payload(payload,batch)
+            rows, errors = retry_network(meter,get_batch)
+            meter.log("RESULT",records=sum(len(bars) for bars in rows.values()))
+        except (RuntimeError, ValueError, OSError) as exc:
+            rows, errors = {}, dict.fromkeys(batch,failure_reason(exc))
+        for symbol in batch:
+            yield symbol,rows.get(symbol,[]),errors.get(symbol)
+    for symbol,market in stocks:
+        if market != "B":
+            continue
+        meter=Meter(db,"akshare-b",now,priority,"close")
+        meter.log("QUERY",1)
+        try:
+            bars=run_metered_b(meter,[symbol],start=start.isoformat(),end=end.isoformat())
+            meter.log("RESULT",records=len(bars))
+            yield symbol,bars,None
+        except (RuntimeError,ValueError,OSError) as exc:
+            yield symbol,[],failure_reason(exc)
+
+
+def retry_network(meter, func):
+    for attempt in range(2):
+        try:
+            return meter.request(func)
+        except (RuntimeError, OSError) as exc:
+            if attempt or not (str(exc).startswith("NETWORK_UNAVAILABLE") or isinstance(exc, TimeoutError)):
+                raise
+            sleep(1)
 
 
 if __name__ == "__main__":

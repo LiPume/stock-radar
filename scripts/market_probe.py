@@ -43,15 +43,30 @@ HOLIDAYS_2026 = ((1, 1, 3), (2, 15, 23), (4, 4, 6), (5, 1, 5),
                  (6, 19, 21), (9, 25, 27), (10, 1, 7))
 
 
+# Only register complete years verified against SSE exchange closure notices:
+# 2025: https://www.sse.com.cn/disclosure/dealinstruc/closed/c/c_20241223_10767110.shtml
+# 2026: https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml
+EXCHANGE_CLOSURES = {
+    2025: ((1, 1, 1), (1, 28, 31), (2, 1, 4), (4, 4, 6), (5, 1, 5),
+           (5, 31, 31), (6, 1, 2), (10, 1, 8)),
+    2026: HOLIDAYS_2026,
+}
+
+
+def is_trading_day(day: date) -> bool:
+    if day.year not in EXCHANGE_CLOSURES:
+        raise ValueError(f"Calendar year {day.year} not covered; update the exchange calendar")
+    return day.weekday() < 5 and not any(
+        day.month == month and first <= day.day <= last
+        for month, first, last in EXCHANGE_CLOSURES[day.year]
+    )
+
+
 def latest_closed_session(now: datetime) -> date:
     local = now.astimezone(SHANGHAI)
-    if local.year != 2026:
-        raise ValueError("Calendar year not covered; supply --expected-date from the exchange calendar")
+    is_trading_day(local.date())  # Unknown current year must fail even on January 1.
     day = local.date() - timedelta(days=int(local.hour < 15))
-    while day.weekday() >= 5 or any(
-        day.year == 2026 and day.month == month and first <= day.day <= last
-        for month, first, last in HOLIDAYS_2026
-    ):
+    while not is_trading_day(day):
         day -= timedelta(days=1)
     return day
 

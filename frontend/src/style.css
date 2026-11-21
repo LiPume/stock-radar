@@ -872,3 +872,11 @@ label small {
     transform: translateX(-50%);
   }
 }
+
+.quoteLine { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin: 10px 0; font-variant-numeric: tabular-nums; }
+.quoteLine small { color: var(--muted, #536577); }
+.usageDetails { margin: 12px 0; }
+.usageDetails summary, .side summary { cursor: pointer; }
+.briefBody { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.historyTabs { flex-wrap: wrap; }
+.options select { padding: 8px; border: 1px solid #c8d3da; border-radius: 6px; background: white; color: inherit; }

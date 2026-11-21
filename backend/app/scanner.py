@@ -8,16 +8,17 @@ import os
 from pathlib import Path
 from threading import Lock
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert
 
 from scripts import market_probe as probe
 from stock_radar.indicators.rsi import calculate_rsi_bundle
 from stock_radar.rules.engine import evaluate_history
-from .db import CheckRun, DB, DailyBar, Delivery, Holding, Setting, SignalEvent
+from .db import CheckRun, DB, DailyBar, DailyBrief, Delivery, Holding, Setting, SignalEvent
+from .intraday import record_transitions, run_intraday
 from .notifications import deliver_batch, send_message
 from .providers import fetch_history
-from .scheduler import make_scheduler
+from .scheduler import intraday_validated, make_scheduler, minute_of, scan_minutes, session_open
 
 
 class ScanBusy(ValueError):
@@ -29,9 +30,10 @@ class ScanCooldown(ValueError):
 
 
 class ScanService:
-    def __init__(self, db: DB, *, fetch=fetch_history, sender=send_message, clock=probe.current_time):
+    def __init__(self, db: DB, *, fetch=fetch_history, snapshot_fetch=None, sender=send_message, clock=probe.current_time):
         self.db = db
         self.fetch = fetch
+        self.snapshot_fetch = snapshot_fetch
         self.sender = sender
         self.clock = clock
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-scan")
@@ -66,6 +68,7 @@ class ScanService:
                 self.scheduler = make_scheduler(self)
                 self.scheduler.start()
                 now = self.clock()
+                self.scheduled_tick("intraday_clock")
                 if (now.hour, now.minute) >= (15, 45) and now.weekday() < 5:
                     self.scheduled_tick("scheduled")
         except BaseException:
@@ -80,57 +83,125 @@ class ScanService:
             self.owner.close()
 
     def scheduled_tick(self, trigger_type: str) -> None:
-        now = self.clock()
+        now = self.clock().astimezone(probe.SHANGHAI)
         try:
-            if probe.latest_closed_session(now) != now.date():
+            if not probe.is_trading_day(now.date()):
                 return
         except ValueError:
-            # Record a failed scan with the uncovered calendar year for the operator.
-            pass
+            return  # Never schedule from an incomplete calendar.
         today = now.date().isoformat()
+        m = now.hour * 60 + now.minute
         with self.db.sessions() as session:
-            if session.scalar(select(CheckRun.id).where(CheckRun.trigger_type == trigger_type,
-                                                        CheckRun.started_at >= today)):
-                return
-            if trigger_type.startswith("retry"):
-                if not session.scalar(select(Holding.id).where(Holding.data_status == "STALE",
-                                                               Holding.enabled, ~Holding.deleted)):
+            if trigger_type == "intraday_clock":
+                prefs = session.get(Setting, 1)
+                brief_minute = minute_of(prefs.brief_time)
+                if prefs.brief_enabled and m >= brief_minute and not session.scalar(
+                    select(DailyBrief.id).where(DailyBrief.trade_date == today)):
+                    trigger_type = "brief"
+                elif prefs.intraday_enabled and intraday_validated() and m in scan_minutes(prefs.interval_minutes):
+                    if prefs.brief_enabled and m == brief_minute:
+                        return  # The brief already covered this time slot.
+                    trigger_type = "intraday"
+                else:
                     return
-        try:
-            self.trigger(trigger_type)
-        except (ScanBusy, ScanCooldown):
-            pass  # Another scan is already evaluating holdings.
+            elif trigger_type in ("scheduled", "retry_1", "retry_2"):
+                if probe.latest_closed_session(now) != now.date():
+                    return
+                if session.scalar(select(CheckRun.id).where(CheckRun.trigger_type == trigger_type,
+                        CheckRun.started_at >= today, CheckRun.started_at < (now.date()+timedelta(days=1)).isoformat())):
+                    return
+            else:
+                return
+            if trigger_type.startswith("retry") and not session.scalar(select(Holding.id).where(
+                    Holding.data_status == "STALE", Holding.enabled, ~Holding.deleted)):
+                return
+        # A busy manual run may delay a scheduled slot, but cannot suppress a close
+        # or the brief. Recheck persisted idempotency only after taking the lock.
+        self._trigger(trigger_type, scheduled_at=now)
 
     def trigger(self, trigger_type: str = "manual") -> int:
-        if not self.gate.acquire(blocking=False):
+        return self._trigger(trigger_type)
+
+    def _trigger(self, trigger_type, scheduled_at=None):
+        if not self.gate.acquire(blocking=scheduled_at is not None):
             raise ScanBusy("已有检测任务正在运行")
+        submitted = False
         try:
-            now = self.clock()
+            now = self.clock().astimezone(probe.SHANGHAI)
+            if scheduled_at is not None and now.date() != scheduled_at.date():
+                return None
             with self.db.sessions.begin() as session:
-                last = session.scalar(select(CheckRun).where(CheckRun.trigger_type == "manual")
+                last = session.scalar(select(CheckRun).where(CheckRun.trigger_type.in_(("manual", "manual_intraday")))
                                       .order_by(CheckRun.id.desc()).limit(1))
                 if (trigger_type == "manual" and last and
                         now - datetime.fromisoformat(last.started_at) < timedelta(seconds=30)):
                     raise ScanCooldown("手动检测间隔为 30 秒")
-                run = CheckRun(trigger_type=trigger_type, started_at=now.isoformat(), state="RUNNING")
+                slot_key = None
+                if scheduled_at is not None:
+                    if trigger_type == "brief":
+                        day = now.date().isoformat()
+                        if session.scalar(select(DailyBrief.id).where(DailyBrief.trade_date == day)):
+                            return None
+                        prior = session.scalar(select(func.count(CheckRun.id)).where(
+                            CheckRun.trigger_type == "brief", CheckRun.started_at.startswith(day)))
+                        # One catch-up attempt if the process died before recording a brief.
+                        # A provider rejection or ambiguous send already has a DailyBrief.
+                        if prior >= 2:
+                            return None
+                        slot_key = f"brief {day} {prior + 1}"
+                    else:
+                        stamp = scheduled_at.strftime("%Y-%m-%d %H:%M" if trigger_type == "intraday" else "%Y-%m-%d")
+                        slot_key = trigger_type + " " + stamp
+                        if session.scalar(select(CheckRun.id).where(CheckRun.slot_key == slot_key)):
+                            return None
+                if trigger_type == "manual":
+                    try:
+                        if session_open(now):
+                            trigger_type = "manual_intraday"
+                    except ValueError:
+                        pass  # Close scanner will record the calendar failure.
+                run = CheckRun(trigger_type=trigger_type, started_at=now.isoformat(), state="RUNNING", slot_key=slot_key)
                 session.add(run)
                 session.flush()
                 run_id = run.id
             self.pool.submit(self._worker, run_id, trigger_type, now)
+            submitted = True
             return run_id
-        except BaseException:
-            self.gate.release()
-            raise
+        finally:
+            if not submitted:
+                self.gate.release()
 
     def _worker(self, run_id: int, trigger_type: str, now: datetime) -> None:
         error = None
         try:
-            self._scan(run_id, trigger_type, now)
-            deliver_batch(self.db, run_id, self.clock(), sender=self.sender)
+            if trigger_type in ("intraday", "brief", "manual_intraday"):
+                with self.db.sessions() as session:
+                    prefs = session.get(Setting, 1)
+                blocked = None
+                if not intraday_validated():
+                    blocked = "盘中行情权益、时效与复权验证尚未完成"
+                elif not session_open(now) or (trigger_type == "brief" and
+                        now.hour * 60 + now.minute - minute_of(prefs.brief_time) >= 5):
+                    blocked = "简报时段已过，缺少该时段可用的盘中快照"
+                fetch = self.snapshot_fetch
+                if not blocked and fetch is None:
+                    from .snapshot_provider import get_snapshots
+                    fetch = get_snapshots
+                run_intraday(self.db, run_id, now, prefs, fetch,
+                             "brief" if trigger_type == "brief" else "normal", blocked, clock=self.clock)
+            else:
+                self._scan(run_id, trigger_type, now)
         except Exception as exc:
             # Library exceptions may contain secret URLs. Only store safe diagnostics.
             error = f"任务中断 ({type(exc).__name__})"
         finally:
+            try:
+                if trigger_type == "brief":
+                    deliver_batch(self.db, run_id, self.clock(), sender=self.sender, daily_brief=True)
+                elif not error:
+                    deliver_batch(self.db, run_id, self.clock(), sender=self.sender)
+            except Exception as exc:
+                error = f"通知处理失败 ({type(exc).__name__})"
             try:
                 with self.db.sessions.begin() as session:
                     run = session.get(CheckRun, run_id)
@@ -163,15 +234,26 @@ class ScanService:
             return
         start = end - timedelta(days=240)
         pending = []
+        market_priority = "normal" if trigger_type == "manual" and (now.hour, now.minute) < (15, 45) else "close"
         for holding in stocks.values():
             cached = self._cached(holding, now, start, end)
             if cached:
+                if self.fetch is fetch_history:
+                    from .market_usage import Meter
+                    meter = Meter(self.db, holding.provider, now, market_priority, "close")
+                    meter.log("QUERY", 1)
+                    meter.log("CACHE", 1, records=len(cached))
                 self._process(run_id, holding, cached, None, start, end, settings, holding.fetched_at, True)
             else:
                 pending.append((holding.symbol, holding.market))
         remaining = dict(pending)
         try:
-            for symbol, rows, error in self.fetch(pending, start, end):
+            if self.fetch is fetch_history:
+                from .providers import get_history
+                records = get_history(self.db, pending, start, end, now, market_priority)
+            else:
+                records = self.fetch(pending, start, end)
+            for symbol, rows, error in records:
                 if symbol not in remaining:
                     continue
                 self._process(run_id, stocks[symbol], rows, error, start, end, settings, self.clock().isoformat(), False)
@@ -190,8 +272,10 @@ class ScanService:
         if age < timedelta(0) or age >= timedelta(minutes=5):
             return []
         with self.db.sessions() as session:
-            query = select(DailyBar).where(DailyBar.symbol == holding.symbol, DailyBar.bar_date >= start.isoformat(),
-                                          DailyBar.provider == holding.provider).order_by(DailyBar.bar_date)
+            query = select(DailyBar).where(
+                DailyBar.symbol == holding.symbol, DailyBar.provider == holding.provider,
+                DailyBar.adjust == ("forward" if holding.market == "A" else "qfq"),
+                DailyBar.bar_date.between(start.isoformat(), end.isoformat())).order_by(DailyBar.bar_date)
             return [{"date": bar.bar_date, **{key: getattr(bar, key) for key in probe.BAR_FIELDS[1:]}}
                     for bar in session.scalars(query)]
 
@@ -223,9 +307,7 @@ class ScanService:
                 prior = probe.latest_closed_session(datetime.combine(end, datetime.min.time(), probe.SHANGHAI))
                 if rows[-2]["date"] != prior.isoformat():
                     error = "INSUFFICIENT_DATA: 缺少上一个交易日的收盘价"
-                elif any(day.year == 2026 and day.month == m and a <= day.day <= b
-                         for day in (date.fromisoformat(row["date"]) for row in rows)
-                         for m, a, b in probe.HOLIDAYS_2026):
+                elif any(not probe.is_trading_day(date.fromisoformat(row["date"])) for row in rows):
                     error = "INVALID_BARS: 收盘序列包含休市日"
         if error:
             self._save_error(run_id, target.id, error)
@@ -239,7 +321,8 @@ class ScanService:
             if not cached:
                 # Replace the fetched window atomically: forward adjustments can revise old prices.
                 session.execute(delete(DailyBar).where(DailyBar.symbol == holding.symbol,
-                                                       DailyBar.provider == provider, DailyBar.adjust == adjust))
+                    DailyBar.provider == provider, DailyBar.adjust == adjust,
+                    DailyBar.bar_date >= start.isoformat(), DailyBar.bar_date <= end.isoformat()))
                 bundle = calculate_rsi_bundle(closes)
                 session.execute(insert(DailyBar), [
                     {"symbol": holding.symbol, "bar_date": row["date"], "adjust": adjust,
@@ -251,8 +334,10 @@ class ScanService:
             holding.data_status, holding.status, holding.reason = "OK", evaluation["status"], None
             for key in ("rsi6", "rsi12", "rsi24"):
                 setattr(holding, key, evaluation[key])
-            evidence = {key: evaluation[key] for key in ("prev_rsi6", "prev_rsi12", "rsi6", "rsi12", "rsi24")}
+            evidence = {key: evaluation[key] for key in ("prev_rsi6", "prev_rsi12", "rsi6", "rsi12", "rsi24", "strategy_version")}
             evidence.update(provider=provider, adjust=adjust, overbought=settings.overbought, high_level=settings.high_level)
+            record_transitions(session, holding, run_id, end.isoformat(), evaluation, evidence,
+                               self.clock(), closing=True)
             for rule in evaluation["events"]:
                 stmt = insert(SignalEvent).values(
                     holding_id=holding.id, symbol=holding.symbol, bar_date=end.isoformat(), rule_code=rule,

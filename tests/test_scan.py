@@ -181,7 +181,8 @@ class ScanTest(unittest.TestCase):
         other.stop()
         self.instant = self.instant.replace(month=10, day=1)
         self.service.scheduled_tick("scheduled")
-        self.assertEqual(len(make_scheduler(self.service).get_jobs()), 3)
+        self.assertEqual({job.id for job in make_scheduler(self.service).get_jobs()},
+                         {"scheduled", "retry_1", "retry_2", "intraday_clock"})
         with self.db.sessions() as session:
             self.assertEqual(session.scalar(select(func.count(CheckRun.id))), 0)
 

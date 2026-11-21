@@ -1,4 +1,11 @@
 export interface Holding {
+  security_name?: string | null
+  price?: number | null
+  currency?: string
+  change_pct?: number | null
+  price_context?: 'CLOSE' | 'INTRADAY' | 'LAST_CLOSE'
+  quote_time?: string | null
+  close_rsi?: Record<'rsi6' | 'rsi12' | 'rsi24', number | null>
   id: number
   symbol: string
   market: 'A' | 'B'
@@ -31,6 +38,7 @@ export interface Bar {
 }
 export interface Signal {
   holding_id: number
+  security_name?: string | null
   symbol: string
   bar_date: string
   rule_code: string
@@ -53,8 +61,26 @@ export interface Settings {
   overbought: number
   high_level: number
   notifications_enabled: boolean
+  intraday_enabled: boolean
+  interval_minutes: number
+  brief_enabled: boolean
+  brief_time: string
+  urgent_enabled: boolean
+  watch_enabled: boolean
+  message_daily_limit: number
+  api_daily_limit: number
+}
+export interface SourceUsage {
+  today: { http_requests: number; successes: number; failures: number; cache_hits: number; last_success: string | null }
+  month: { http_requests: number }
+  pause_reason: string | null
 }
 export interface Health {
+  version?: string
+  plan?: { planned_today: number; next_scan_at: string | null; next_brief_at: string | null; intraday_validated: boolean }
+  runs_today?: { actual: number; success: number; failed: number; partial: number; running: number }
+  sources?: Record<string, SourceUsage>
+  messages?: { used: number; remaining: number; limit: number; brief_status: string }
   latest_run: Run | null
   hithink_configured: boolean
   notification_configured: boolean

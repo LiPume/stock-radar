@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -47,6 +47,21 @@ class SettingsInput(Payload):
     overbought: float = Field(gt=0, le=100)
     high_level: float = Field(ge=0, le=100)
     notifications_enabled: bool
+    intraday_enabled: bool = False
+    interval_minutes: Literal[15, 30, 60] = 30
+    brief_enabled: bool = True
+    brief_time: str = Field(default="14:30", pattern=r"^[0-2][0-9]:[0-5][0-9]$")
+    urgent_enabled: bool = True
+    watch_enabled: bool = True
+    message_daily_limit: int = Field(default=5, ge=1, le=10000)
+    api_daily_limit: int = Field(default=30, ge=1, le=10000)
+
+    @field_validator("brief_time")
+    @classmethod
+    def trading_time(cls, value: str) -> str:
+        if not ("09:30" <= value <= "11:30" or "13:00" <= value <= "14:59"):
+            raise ValueError("简报时间须在盘中交易时段")
+        return value
 
     @classmethod
     def public_values(cls, row: Setting) -> dict:
@@ -57,6 +72,11 @@ def record(row) -> dict | None:
     if row is None:
         return None
     return {c.key: getattr(row, c.key) for c in row.__table__.columns}
+
+
+def named_record(row) -> dict:
+    from .securities import verified_name
+    return {**record(row), "security_name": verified_name(row.symbol)}
 
 
 def holding_record(row: Holding) -> dict:
@@ -105,7 +125,7 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
             scanner.stop()
             db.engine.dispose()
 
-    app = FastAPI(title="持仓雷达", lifespan=lifespan)
+    app = FastAPI(title="持仓雷达", version="1.1.0", lifespan=lifespan)
     default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
     origins = [o.strip().rstrip("/") for o in os.getenv("CORS_ORIGINS", default_origins).split(",") if o.strip()]
     if "*" in origins:
@@ -160,9 +180,15 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
 
     @api.get("/holdings")
     def holdings(request: Request):
+        from .dashboard import quote_fields
+        now = current_time()
         with request.app.state.db.sessions() as session:
             rows = session.scalars(select(Holding).where(Holding.deleted.is_(False)).order_by(Holding.id))
-            items = [holding_record(r) for r in rows]
+            items = []
+            for row in rows:
+                item = holding_record(row)
+                quote_fields(session, row, item, now)
+                items.append(item)
         order = {"ALERT": 0, "WATCH": 1, "DATA_UNAVAILABLE": 2, "STALE": 2, "INSUFFICIENT_DATA": 2}
         items.sort(key=lambda h: (not h["enabled"], order.get(h["status"], 3), h["id"]))
         return envelope(request, items)
@@ -220,11 +246,12 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
 
     @api.get("/stocks/{symbol}/bars")
     def bars(request: Request, symbol: str, days: int = Query(default=120, ge=1, le=500)):
+        from .dashboard import closing_bars
         with request.app.state.db.sessions() as session:
-            if session.scalar(select(Holding.id).where(Holding.symbol == symbol, Holding.deleted.is_(False))) is None:
+            market = session.scalar(select(Holding.market).where(Holding.symbol == symbol, Holding.deleted.is_(False)))
+            if market is None:
                 raise HTTPException(404, "未找到持仓")
-            rows = session.scalars(select(DailyBar).where(DailyBar.symbol == symbol)
-                                   .order_by(DailyBar.bar_date.desc()).limit(days)).all()
+            rows = session.scalars(closing_bars(symbol, market).limit(days)).all()
             return envelope(request, [record(r) for r in reversed(rows)])
 
     @api.get("/signals")
@@ -234,7 +261,7 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
             query = query.where(SignalEvent.symbol == symbol)
         with request.app.state.db.sessions() as session:
             rows = session.scalars(query.order_by(SignalEvent.bar_date.desc(), SignalEvent.id.desc()).limit(limit))
-            return envelope(request, [record(r) for r in rows])
+            return envelope(request, [named_record(r) for r in rows])
 
     @api.post("/checks", status_code=202)
     def start_check(request: Request):
@@ -262,25 +289,54 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
 
     @api.put("/settings")
     def change_settings(request: Request, payload: SettingsInput):
+        from .scheduler import plan_status
+        if payload.intraday_enabled and not plan_status(request.app.state.db, current_time())["intraday_validated"]:
+            raise HTTPException(409, "尚待完成交易时段行情、复权和权益核验")
         if payload.notifications_enabled and not os.getenv("SERVERCHAN_SENDKEY", "").strip():
             raise HTTPException(409, "请先在后端配置 Server酱 SendKey")
         with request.app.state.db.sessions() as session:
             row = session.get(Setting, 1)
-            for key, value in payload.model_dump().items():
+            for key, value in payload.model_dump(exclude_unset=True).items():
                 setattr(row, key, value)
             session.commit()
             return envelope(request, SettingsInput.public_values(row))
 
     @api.get("/system/status")
     def status(request: Request):
+        from .briefings import notification_status
+        from .dashboard import run_counts
+        from .market_usage import usage_summary
+        from .scheduler import plan_status
+        db = request.app.state.db
+        now = current_time()
+        plan = plan_status(db, now)
+        usage = usage_summary(db, now)
         with request.app.state.db.sessions() as session:
             return envelope(request, {
+                "version": "1.1", "plan": plan,
+                "runs_today": run_counts(session, now.date().isoformat()),
+                "sources": usage, "messages": notification_status(session, now),
                 "latest_run": record(session.scalar(select(CheckRun).order_by(CheckRun.id.desc()).limit(1))),
                 "latest_delivery": record(session.scalar(select(Delivery).order_by(Delivery.id.desc()).limit(1))),
                 "hithink_configured": bool(os.getenv("HITHINK_FINANCE_API_KEY", "").strip()),
                 "notification_configured": bool(os.getenv("SERVERCHAN_SENDKEY", "").strip()),
                 "scheduler_enabled": os.getenv("SCHEDULER_ENABLED", "true").lower() in ("true", "1", "yes", "on"),
             })
+
+    @api.get("/history")
+    def monitor_history(request: Request, limit: int = Query(default=30, ge=1, le=100)):
+        from .db import DailyBrief, RiskTransition
+        with request.app.state.db.sessions() as session:
+            def recent(model):
+                return [record(row) for row in session.scalars(
+                    select(model).order_by(model.id.desc()).limit(limit))]
+            briefs = recent(DailyBrief)
+            for item in briefs:
+                delivery = session.scalar(select(Delivery).where(Delivery.run_id == item["run_id"]))
+                item["delivery_status"] = delivery.status if delivery else "PENDING"
+            transitions = session.scalars(select(RiskTransition).order_by(RiskTransition.id.desc()).limit(limit))
+            return envelope(request, {"transitions": [named_record(r) for r in transitions],
+                                      "briefings": briefs, "deliveries": recent(Delivery)})
 
     app.include_router(api)
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

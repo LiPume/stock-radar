@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stock-radar"
-version = "0.1.0"
+version = "1.1.0"
 description = "Private holdings monitor with daily RSI risk alerts"
 readme = "README.md"
 requires-python = ">=3.11"
