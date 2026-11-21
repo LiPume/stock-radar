@@ -11,8 +11,8 @@ const props = defineProps<{ bars: Bar[] }>()
 const el = ref<HTMLElement>()
 let chart: EChartsType | undefined
 let observer: ResizeObserver | undefined
-const periods = [30, 60, 120]
-const range = ref(60)
+const periods = [5, 10, 20, 30, 60, 120]
+const range = ref(20)
 const rsiFields = ['rsi6', 'rsi12', 'rsi24'] as const
 type LineField = MAField | (typeof rsiFields)[number]
 const colors: Record<LineField, string> = {
@@ -113,11 +113,13 @@ onBeforeUnmount(() => {
 <template>
   <section class="panel chart">
     <div class="sectionTitle">
-      <h2>日线走势</h2>
-      <div class="seg small" role="group" aria-label="显示的交易日数">
-        <button v-for="n in periods" :key="n" :class="{ chosen: range === n }" :aria-pressed="range === n" @click="range = n">
-          {{ n }} 日
-        </button>
+      <h2>日K与相对强弱指标</h2>
+    </div>
+    <div class="chartRange">
+      <strong>图表区间</strong>
+      <div class="seg chartRangeButtons" role="group" aria-label="图表区间（交易日）">
+        <button v-for="n in periods" :key="n" type="button" :class="{ chosen: range === n }"
+                :aria-pressed="range === n" @click="range = n">近{{ n }}日</button>
       </div>
     </div>
     <div class="chartKeys" role="group" aria-label="切换收盘均线">

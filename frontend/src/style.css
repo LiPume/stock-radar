@@ -902,3 +902,23 @@ label small {
 .chartKeys button[aria-pressed='false']::before { border-top-style: dotted; }
 .chartKeys button:focus-visible { outline: 2px solid currentColor; }
 .chartRsiKeys { position: absolute; top: 48%; left: 0; }
+
+.chartRange { margin: 0 0 10px; }
+.chartRange > strong { display: block; margin-bottom: 5px; font-size: 13px; color: var(--muted); }
+.chartRangeButtons {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  max-width: 480px;
+  margin: 0;
+}
+.chartRangeButtons button {
+  padding: 7px 2px;
+  min-height: 38px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chartRangeButtons .chosen { background: var(--blue); color: #fff; }
+@media (max-width: 550px) {
+  .chartRangeButtons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .chartRangeButtons button { min-height: 40px; }
+}

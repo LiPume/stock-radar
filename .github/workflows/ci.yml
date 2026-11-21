@@ -3,7 +3,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,15 +38,16 @@ jobs:
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || (github.repository == 'LiPume/stock-radar' && github.ref == 'refs/heads/main' && 'https://8.217.211.34/api/v1') || '' }}
       - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           path: frontend/dist
 
   publish:
     needs: [backend, frontend]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -57,5 +57,45 @@ jobs:
       group: github-pages
       cancel-in-progress: false
     steps:
+      - name: Check Pages publishing source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mode=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type')
+          echo "GitHub Pages build type is $mode"
+          test "$mode" = workflow
       - id: publish
         uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Download the exact Pages build
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: ${{ runner.temp }}/stock-radar-pages
+      - run: |
+          mkdir -p frontend/dist
+          tar -xf "$RUNNER_TEMP/stock-radar-pages/artifact.tar" -C frontend/dist
+      - name: Verify the public application, backend and mobile charts
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          PAGES_URL: https://lipume.github.io/stock-radar/
+          API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://8.217.211.34/api/v1' }}
+        run: node frontend/tests/verify-pages.mjs
+      - name: Upgrade an installed copy of the previous mobile app
+        run: >-
+          node frontend/tests/pwa-upgrade.cjs
+          --old-ref 1b289b27fdbcc6fdd237ee82aa9f0c9c72e15da9
+          --dist frontend/dist
+          --published-url https://lipume.github.io/stock-radar/

@@ -7,6 +7,8 @@ import MonitoringStatus from './MonitoringStatus.vue'
 import MonitoringHistory from './MonitoringHistory.vue'
 import LoginPanel from './LoginPanel.vue'
 import HoldingForm from './HoldingForm.vue'
+import VersionStatus from './VersionStatus.vue'
+import { applyUpdate, applyingUpdate, dismissUpdate, onlineBuild, showUpdate, versionMessage } from './version'
 import {
   api,
   badge,
@@ -332,6 +334,15 @@ onBeforeUnmount(() => {
   </header>
   <main class="wrap" :class="{ signed }">
     <p v-if="!online" class="notice" role="status">当前设备已离线，恢复网络后可继续检测。</p>
+    <section v-if="showUpdate" class="notice" aria-label="发现新版本">
+      <strong>发现新版本 {{ onlineBuild?.version }}</strong>
+      <p v-if="applyingUpdate || versionMessage !== '有新版本可用'" aria-live="polite">
+        {{ applyingUpdate ? '正在应用更新…' : versionMessage }}
+      </p>
+      <p v-if="signed">立即更新会刷新页面，请在更新后重新登录。</p>
+      <button class="primary" :disabled="applyingUpdate || !online" @click="applyUpdate">立即更新</button>
+      <button class="linkBtn" :disabled="applyingUpdate" @click="dismissUpdate">稍后</button>
+    </section>
     <login-panel v-if="!signed" :message="sessionMessage" @logged-in="enter" />
     <template v-else>
       <div v-if="error" class="error strip" role="alert">
@@ -580,6 +591,7 @@ onBeforeUnmount(() => {
             </p>
           </aside>
         </div>
+        <VersionStatus :backend="health?.version" />
       </template>
       <p v-else class="notice">此页面不存在。<a href="#/">返回持仓总览</a></p>
       <holding-form :show="formOpen" :holding="editing" @close="formOpen = false" @saved="saved" />

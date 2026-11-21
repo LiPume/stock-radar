@@ -29,7 +29,9 @@ npm --prefix frontend run build
 
 ## 部署与验证
 
-GitHub Actions 运行 Python 单测及前端 lint、类型检查和构建，全部通过后发布 Pages。正式主页默认连接香港 HTTPS API。迁往其他地址时，在仓库 Actions 变量 `VITE_API_BASE_URL` 设置完整 API 根地址（结尾为 `/api/v1`）并重新构建。部署、CORS、备份和恢复步骤见[运维指南](docs/06_部署安全运维.md)，微信投递行为见[调度与通知](docs/调度与通知.md)。
+正式发布由推送到 `main` 触发。仓库 Settings → Pages → Source 选择 GitHub Actions。唯一工作流先运行后端测试，再将通过前端检查的 Vue 构建包发布到原网址，并用浏览器验收版本、香港 API、图表和旧版 PWA 的升级。用户可在设置底部对照本机版本、线上版本及后端版本。[手机端与发布说明](frontend/README.md)
+
+正式主页默认连接香港 HTTPS API。变更后端时，在仓库 Actions 变量 `VITE_API_BASE_URL` 设置完整 API 根地址（结尾为 `/api/v1`）并重新构建。部署、CORS、备份和恢复步骤见[运维指南](docs/06_部署安全运维.md)，微信投递行为见[调度与通知](docs/调度与通知.md)。
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
