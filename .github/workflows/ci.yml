@@ -37,7 +37,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
         env:
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || (github.repository == 'LiPume/stock-radar' && github.ref == 'refs/heads/main' && 'https://8.217.211.34/api/v1') || '' }}
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request'
         with:
