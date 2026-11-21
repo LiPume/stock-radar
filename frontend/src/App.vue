@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Icon as VanIcon, Switch as VanSwitch, showConfirmDialog } from 'vant'
 import QuoteSummary from './QuoteSummary.vue'
+import { deliveryText, reasonText } from './display'
 import MonitoringStatus from './MonitoringStatus.vue'
 import MonitoringHistory from './MonitoringHistory.vue'
 import LoginPanel from './LoginPanel.vue'
@@ -398,7 +399,7 @@ onBeforeUnmount(() => {
               <QuoteSummary :holding="h" />
               <div class="readings">
                 <div v-for="k in ['rsi6', 'rsi12', 'rsi24'] as const" :key="k">
-                  <small>{{ k.toUpperCase() }}</small
+                  <small>{{ k.slice(3) }}日强弱</small
                   ><b>{{ numberText(h.price_context === 'LAST_CLOSE' ? h.close_rsi?.[k] : h[k]) }}</b>
                 </div>
               </div>
@@ -418,7 +419,7 @@ onBeforeUnmount(() => {
                 <span>最近任务</span><b>{{ runLabel(health?.latest_run) }}</b>
               </div>
               <p v-if="health?.latest_run?.error_summary" class="warnText">
-                {{ health.latest_run.error_summary }}
+                {{ reasonText(health.latest_run.error_summary) }}
               </p>
               <div class="line">
                 <span>收盘后检测</span
@@ -454,10 +455,10 @@ onBeforeUnmount(() => {
           <section class="panel side detailTop">
             <span class="tag" :class="badge(detail)[0]">{{ badge(detail)[1] }}</span>
             <QuoteSummary :holding="detail" />
-            <p v-if="detail.reason">{{ detail.reason }}</p>
+            <p v-if="detail.reason">{{ reasonText(detail.reason) }}</p>
             <div class="readings">
               <div v-for="k in ['rsi6', 'rsi12', 'rsi24'] as const" :key="k">
-                <small>{{ k.toUpperCase() }}</small
+                <small>{{ k.slice(3) }}日强弱</small
                 ><b>{{ numberText(detail.price_context === 'LAST_CLOSE' ? detail.close_rsi?.[k] : detail[k]) }}</b>
               </div>
             </div>
@@ -524,7 +525,7 @@ onBeforeUnmount(() => {
                 step="0.1"
                 required
             /></label>
-            <p>RSI6 从阈值或以下上穿至阈值以上，产生关注信号。</p>
+            <p>6 日相对强弱指标（RSI）从阈值或以下升至阈值以上，产生关注信号。</p>
             <label
               >高位死叉门槛<input
                 v-model.number="settingsDraft.high_level"
@@ -534,7 +535,7 @@ onBeforeUnmount(() => {
                 step="0.1"
                 required
             /></label>
-            <p>前日 RSI6 达到门槛，当日 RSI6 下穿 RSI12，产生重点预警。</p>
+            <p>前一交易日的 6 日强弱指标达到门槛，当天从上向下穿过 12 日指标，产生重点预警。</p>
             <div class="line">
               <span>微信通知总开关</span
               ><van-switch
@@ -543,13 +544,13 @@ onBeforeUnmount(() => {
                 aria-label="微信通知总开关"
               />
             </div>
-            <p v-if="!health.notification_configured">需在后端配置 Server酱 SendKey。</p>
+            <p v-if="!health.notification_configured">请让管理员配置微信推送密钥。</p>
             <template v-if="health.version">
               <h2>盘中监控</h2>
               <div class="line"><span>自动盘中检测</span><van-switch v-model="settingsDraft.intraday_enabled" :disabled="!health.plan?.intraday_validated" size="24px" aria-label="自动盘中检测" /></div>
               <p v-if="!health.plan?.intraday_validated">等待交易时段行情与复权核验。此期间简报逐只列出最近有效收盘及日期。</p>
               <label>检测间隔<select v-model.number="settingsDraft.interval_minutes"><option v-for="m in [15,30,60]" :key="m" :value="m">{{ m }} 分钟</option></select></label>
-              <label>每个行情源每日 HTTP 请求上限<input v-model.number="settingsDraft.api_daily_limit" type="number" min="1" max="10000" required /></label>
+              <label>每个行情源每日请求上限<input v-model.number="settingsDraft.api_daily_limit" type="number" min="1" max="10000" required /></label>
               <h2>简报与即时提醒</h2>
               <div class="line"><span>交易日持仓简报</span><van-switch v-model="settingsDraft.brief_enabled" size="24px" aria-label="交易日持仓简报" /></div>
               <label>简报时间（上海）<input v-model="settingsDraft.brief_time" type="time" min="09:30" max="14:59" required /></label>
@@ -565,17 +566,17 @@ onBeforeUnmount(() => {
               <span>同花顺凭据</span><b>{{ health.hithink_configured ? '已配置' : '待配置' }}</b>
             </div>
             <div class="line">
-              <span>Server酱凭据</span><b>{{ health.notification_configured ? '已配置' : '待配置' }}</b>
+              <span>微信推送密钥</span><b>{{ health.notification_configured ? '已配置' : '待配置' }}</b>
             </div>
             <div class="line">
               <span>定时检测</span><b>{{ health.scheduler_enabled ? '已启用' : '未启用' }}</b>
             </div>
             <p class="meta">交易日 15:45，上海时间</p>
             <div class="line">
-              <span>最近推送</span><b>{{ health.latest_delivery?.status || '尚无记录' }}</b>
+              <span>最近推送</span><b>{{ deliveryText(health.latest_delivery?.status) }}</b>
             </div>
             <p v-if="health.latest_delivery" class="meta">
-              {{ timeText(health.latest_delivery.created_at) }} {{ health.latest_delivery.reason }}
+              {{ timeText(health.latest_delivery.created_at) }} {{ reasonText(health.latest_delivery.reason) }}
             </p>
           </aside>
         </div>

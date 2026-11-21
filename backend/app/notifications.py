@@ -16,7 +16,7 @@ from urllib.request import Request, build_opener
 from sqlalchemy import select, text, tuple_
 
 from scripts.market_probe import NoKeyRedirect, SHANGHAI, is_trading_day
-from .briefings import ALERT_TITLE, WATCH_TITLE, SITE, create_brief, notification_status, number
+from .briefings import ALERT_TITLE, WATCH_TITLE, INDICATOR_NOTE, SITE, create_brief, notification_status, number
 from .db import CheckRun, DB, DailyBrief, Delivery, RiskTransition, Setting, SignalEvent
 from .securities import verified_name
 
@@ -185,14 +185,14 @@ def _claim(db, run_id, now, daily_brief):
             names = {i["symbol"]: i["name"] for i in brief.items}
             if chosen:
                 risk_lines = "\n\n".join(_evidence(e, names.get(e.symbol)) for e in chosen)
-                brief.body = f"本轮新触发风险\n\n{risk_lines}\n\n" + brief.body
+                brief.body = f"本轮新触发风险\n\n{INDICATOR_NOTE}\n\n{risk_lines}\n\n" + brief.body.replace(INDICATOR_NOTE + "\n\n", "", 1)
             body = brief.body
         else:
             kind = (
                 "alert" if any(e.severity == "ALERT" for e in chosen or transitions or signals) else "watch"
             )
             title = ALERT_TITLE if kind == "alert" else WATCH_TITLE
-            lines = [f"检测时间：{now:%Y-%m-%d %H:%M}（北京时间）"]
+            lines = [f"检测时间：{now:%Y-%m-%d %H:%M}（北京时间）", INDICATOR_NOTE]
             lines.extend(_evidence(e) for e in chosen)
             lines.append(f"请结合持仓计划评估风险。[查看持仓雷达]({SITE})")
             body = "\n\n".join(lines)

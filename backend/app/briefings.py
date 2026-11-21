@@ -7,12 +7,28 @@ from sqlalchemy import func, select
 from scripts.market_probe import SHANGHAI, is_trading_day
 from .db import DailyBar, DailyBrief, Delivery, Holding, IntradayReading, Setting
 from .securities import currency_for, verified_name
-from .dashboard import closing_bars
+from .moving_averages import closing_bars, latest_averages
 
 SITE = "https://lipume.github.io/stock-radar/"
 BRIEF_TITLE = "【持仓雷达】每日持仓监控简报"
 ALERT_TITLE = "🚨【持仓雷达】重点卖出风险预警"
 WATCH_TITLE = "⚠️【持仓雷达】RSI 超买关注"
+INDICATOR_NOTE = "相对强弱指标（RSI）用来观察近期价格动能。"
+CURRENCIES = {"CNY": "人民币元", "USD": "美元", "HKD": "港元"}
+SOURCE_ISSUES = {
+    "REQUEST_BUDGET": "已达到本地行情请求上限，或剩余额度已预留给简报和收盘检测",
+    "SOURCE_PAUSED": "行情源已暂停请求",
+    "RATE_LIMIT": "行情服务商限制了请求频率",
+    "AUTH": "行情服务授权无效或权限不足",
+    "NETWORK": "网络连接失败，暂时无法取得行情",
+    "HTTP_ERROR": "行情服务未正常响应",
+    "API_ERROR": "行情服务未能完成本次查询",
+    "EMPTY": "行情源尚未返回该股数据",
+    "SCHEMA_CHANGED": "行情服务返回的数据格式出现变化",
+    "DEPENDENCY_MISSING": "行情组件未就绪",
+    "UPSTREAM_ERROR": "行情服务暂时不可用",
+}
+
 LABELS = {
     "ALERT": "重点预警",
     "WATCH": "超买关注",
@@ -52,6 +68,16 @@ def notification_status(session, now: datetime) -> dict:
     }
 
 
+def readable_reason(reason):
+    causes = [message for code, message in SOURCE_ISSUES.items() if code in reason]
+    if causes:
+        prefix = "复权口径未核实，" if "复权口径未核实" in reason else ""
+        return prefix + "，".join(causes)
+    if "盘中行情获取失败 (" in reason:
+        return "盘中行情获取失败"
+    return reason.replace("OHLC", "开盘价、最高价、最低价和收盘价")
+
+
 def _item(session, holding, reading, day):
     symbol = holding.symbol
     name = (reading.name if reading else None) or verified_name(symbol)
@@ -73,6 +99,7 @@ def _item(session, holding, reading, day):
             "currency": reading.currency or currency,
             "status": reading.status,
             "phase": "PROVISIONAL",
+            **latest_averages(session, symbol, holding.market, day=day, provisional_price=reading.price),
             "price": reading.price,
             "quote_time": reading.quote_time,
             "change_pct": reading.change_pct,
@@ -93,6 +120,8 @@ def _item(session, holding, reading, day):
         "currency": currency,
         "status": "ERROR",
         "phase": "LAST_CLOSE",
+        **(latest_averages(session, symbol, holding.market, day=bar.bar_date) if bar else
+           {"ma5": None, "ma10": None, "ma20": None}),
         "price": bar.close if bar else None,
         "quote_time": bar.bar_date if bar else None,
         "change_pct": None,
@@ -110,20 +139,23 @@ def number(value):
 def format_brief(items, now):
     counts = {status: sum(item["status"] == status for item in items) for status in LABELS}
     summary = " · ".join(f"{LABELS[k]} {n}" for k, n in counts.items())
-    lines = [f"📊 持仓雷达 · {now:%Y-%m-%d %H:%M}（北京时间）", f"监控 {len(items)} 只 ｜ {summary}"]
+    lines = [f"📊 持仓雷达 · {now:%Y-%m-%d %H:%M}（北京时间）", f"监控 {len(items)} 只 ｜ {summary}", INDICATOR_NOTE]
     for item in items:
         status = item["status"]
         name = item["name"] or "名称待核实"
         lines.append(f"**{ICONS[status]} {name}（{item['symbol']}） · {LABELS[status]}**")
-        quote = number(item["price"]) + " " + (item["currency"] or "币种待核实")
+        currency = CURRENCIES.get(item["currency"], "币种待核实")
+        quote = number(item["price"]) + " " + currency
         stamp = str(item["quote_time"] or "无有效行情时间")
         rsi = " / ".join(number(item[k]) for k in ("rsi6", "rsi12", "rsi24"))
         if status == "ERROR":
-            lines.append(f"{item['reason']}。最近正式日线 {stamp}，前复权收盘 {quote}；今日涨跌待核实。")
+            lines.append(f"{readable_reason(item['reason'])}。最近正式日线 {stamp}，前复权收盘 {quote}；今日涨跌待核实。")
         else:
             change = "—" if item["change_pct"] is None else f"{item['change_pct']:+.2f}%"
             lines.append(f"{quote} ｜ 今日 {change} ｜ 行情 {stamp}")
-        lines.append(f"RSI6 / 12 / 24：{rsi}")
+        lines.append(f"RSI（6 / 12 / 24 日）：{rsi}")
+        averages = " / ".join(number(item.get(k)) for k in ("ma5", "ma10", "ma20"))
+        lines.append(f"5 / 10 / 20 日均价（{currency}）：{averages}")
     focus = [i["symbol"] for i in items if i["status"] in ("WATCH", "ALERT")]
     conclusion = "关注 " + "、".join(focus) if focus else "本轮有效行情未触发卖出风险规则"
     if counts["ERROR"] == len(items) and items:

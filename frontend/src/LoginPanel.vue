@@ -41,7 +41,7 @@ onMounted(() => {
 <template>
   <div class="loginLayout">
     <aside class="instrument">
-      <div class="instrumentHead"><span class="lightDot"></span>RSI 日线监控</div>
+      <div class="instrumentHead"><span class="lightDot"></span>持仓日线监控</div>
       <div class="scope" aria-hidden="true">
         <div class="sweep"></div>
         <div class="axisX"></div>
@@ -50,7 +50,7 @@ onMounted(() => {
       </div>
       <div class="instrumentFoot">
         <span class="big">持仓雷达</span>
-        <p>跟踪收盘行情，查看持仓的 RSI 风险信号。</p>
+        <p>查看持仓走势，以及相对强弱指标（RSI）发出的风险提醒。</p>
       </div>
     </aside>
     <section class="loginPanel">
@@ -98,7 +98,7 @@ onMounted(() => {
         <button v-if="apiRoot && connection === 'offline'" class="linkBtn" @click="connect">重试</button>
       </div>
       <p v-if="!apiRoot" class="configMsg">
-        请在仓库变量中设置 HTTPS 后端地址 VITE_API_BASE_URL，并重新发布网页。
+        请让管理员连接行情服务后重新发布网页。
       </p>
     </section>
   </div>

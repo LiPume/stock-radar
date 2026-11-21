@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from sqlalchemy import func, select
-from backend.app.briefings import ALERT_TITLE, BRIEF_TITLE, notification_status
+from backend.app.briefings import ALERT_TITLE, BRIEF_TITLE, notification_status, readable_reason
 from backend.app.db import (
     CheckRun,
     DailyBar,
@@ -98,6 +98,13 @@ class BriefingTest(unittest.TestCase):
     def send(self, run_id, daily=False, db=None):
         deliver_batch(db or self.db, run_id, self.now, sender=self.sender, daily_brief=daily)
 
+    def test_source_errors_are_readable_in_messages(self):
+        self.assertEqual(readable_reason("SOURCE_PAUSED: hithink AUTH"),
+                         "行情源已暂停请求，行情服务授权无效或权限不足")
+        self.assertIn("网络连接失败", readable_reason("NETWORK_UNAVAILABLE: AKShare timed out"))
+        self.assertIn("开盘价", readable_reason("OHLC 数据缺失"))
+        self.assertIn("复权口径未核实", readable_reason("复权口径未核实 · AUTH"))
+
     def test_complete_healthy_brief_and_restart(self):
         run = self.run_row()
         self.reading(run)
@@ -113,6 +120,7 @@ class BriefingTest(unittest.TestCase):
                 (report.title, entry["status"], entry["name"]), (BRIEF_TITLE, "NO_RULE_TRIGGERED", "模拟公司")
             )
             self.assertIn("今日 +1.54%", report.body)
+            self.assertIn("相对强弱指标（RSI）", report.body)
             self.assertIn("数据异常 0", report.body)
             status = notification_status(s, self.now)
             self.assertEqual((status["used"], status["remaining"], status["brief_status"]), (1, 4, "SENT"))
@@ -127,6 +135,12 @@ class BriefingTest(unittest.TestCase):
                     Holding(symbol="600002.SH", market="A", deleted=True),
                 ]
             )
+            # The current day's incomplete close must not enter the fallback averages.
+            for day, price in (("2026-11-13", 0.8), ("2026-11-16", 0.9), ("2026-11-17", 1.0),
+                               ("2026-11-18", 1.1), ("2026-11-20", 1.2)):
+                s.add(DailyBar(symbol="900901.SH", bar_date=day, provider="fixture", adjust="qfq",
+                               fetched_at=self.now.isoformat(), open=price, high=price, low=price,
+                               close=price, volume=700))
             s.add(
                 DailyBar(
                     symbol="900901.SH",
@@ -152,12 +166,40 @@ class BriefingTest(unittest.TestCase):
             self.assertEqual(len(report.items), 3)
             self.assertTrue(all(item["status"] == "ERROR" for item in report.items))
             self.assertIn("2026-11-19", report.body)
-            self.assertIn("1.02 USD", report.body)
-            self.assertIn("HKD", report.body)
+            self.assertIn("1.02 美元", report.body)
+            self.assertIn("5 / 10 / 20 日均价（美元）：0.96 / — / —", report.body)
+            self.assertIn("港元", report.body)
             self.assertNotIn("用户别名", report.body)
             self.assertNotIn("600002.SH", report.body)
             self.assertIn("今日涨跌待核实", report.body)
             self.assertIn("全部持仓", report.body)
+
+    def test_brief_averages_include_temporary_price_and_freeze_delivery_text(self):
+        # Four eligible closes plus the current quote provide exactly the MA5 window.
+        with self.db.sessions.begin() as session:
+            for day, close in (("2026-11-16", 31), ("2026-11-17", 32),
+                               ("2026-11-18", 33), ("2026-11-19", 34)):
+                session.add(DailyBar(symbol=self.stock.symbol, bar_date=day,
+                    provider="hithink", adjust="forward", fetched_at=self.now.isoformat(),
+                    open=close, high=close, low=close, close=close, volume=1000))
+        run = self.run_row()
+        self.reading(run)
+        self.send(run, daily=True)
+        with self.db.sessions() as session:
+            report = session.scalars(select(DailyBrief)).one()
+            item = report.items[0]
+            self.assertAlmostEqual(item["ma5"], (31+32+33+34+35.31)/5, places=6)
+            self.assertIsNone(item["ma10"])
+            self.assertIsNone(item["ma20"])
+            self.assertIn("5 / 10 / 20 日均价（人民币元）：33.06 / — / —", report.body)
+            original_body = report.body
+        # A later database write must not revise a brief already generated and sent.
+        with self.db.sessions.begin() as session:
+            session.scalars(select(DailyBar).where(DailyBar.bar_date=="2026-11-16")).one().close = 40
+        self.send(self.run_row(), daily=True)
+        self.sender.assert_called_once()
+        with self.db.sessions() as session:
+            self.assertEqual(session.scalars(select(DailyBrief)).one().body, original_body)
 
     def test_alert_in_brief_is_one_send_and_close_confirmation_is_linked(self):
         run = self.run_row()
@@ -167,6 +209,7 @@ class BriefingTest(unittest.TestCase):
         title, body = self.sender.call_args.args
         self.assertEqual(title, BRIEF_TITLE)
         self.assertTrue(body.startswith("本轮新触发风险"))
+        self.assertEqual(body.count("相对强弱指标（RSI）"), 1)
         for point in ("78.20", "73.10", "74.30", "74.50"):
             self.assertIn(point, body)
         close = self.run_row()

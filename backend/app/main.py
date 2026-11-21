@@ -246,13 +246,16 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
 
     @api.get("/stocks/{symbol}/bars")
     def bars(request: Request, symbol: str, days: int = Query(default=120, ge=1, le=500)):
-        from .dashboard import closing_bars
+        from .moving_averages import WARMUP_BARS, bar_averages, closing_bars
         with request.app.state.db.sessions() as session:
             market = session.scalar(select(Holding.market).where(Holding.symbol == symbol, Holding.deleted.is_(False)))
             if market is None:
                 raise HTTPException(404, "未找到持仓")
-            rows = session.scalars(closing_bars(symbol, market).limit(days)).all()
-            return envelope(request, [record(r) for r in reversed(rows)])
+            newest = session.scalars(closing_bars(symbol, market)
+                .where(DailyBar.bar_date <= current_time().date().isoformat()).limit(days + WARMUP_BARS)).all()
+            rows = list(reversed(newest))
+            points = [{**record(row), **averages} for row, averages in zip(rows, bar_averages(rows))]
+            return envelope(request, points[-days:])
 
     @api.get("/signals")
     def signals(request: Request, symbol: str | None = None, limit: int = Query(default=50, ge=1, le=500)):

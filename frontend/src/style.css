@@ -136,7 +136,6 @@ label small {
 .instrumentHead,
 .connection,
 .seg,
-.legend,
 .stockFoot {
   display: inline-flex;
   align-items: center;
@@ -652,23 +651,6 @@ label small {
   margin-top: 8px;
   overflow-wrap: anywhere;
 }
-.legend {
-  gap: 14px;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-}
-.legend span:nth-child(1) {
-  color: #144fb4;
-}
-.legend span:nth-child(2) {
-  color: #9c5102;
-}
-.legend span:nth-child(3) {
-  color: #6941a8;
-}
-.legend small {
-  color: var(--muted);
-}
 .small {
   margin: 0;
 }
@@ -880,3 +862,43 @@ label small {
 .briefBody { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
 .historyTabs { flex-wrap: wrap; }
 .options select { padding: 8px; border: 1px solid #c8d3da; border-radius: 6px; background: white; color: inherit; }
+.quoteMeans {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+  font-variant-numeric: tabular-nums;
+}
+.quoteMeans small { font-size: inherit; }
+.quoteMeans span { white-space: nowrap; }
+.quoteMeans b { color: var(--ink); font-weight: 600; }
+.chartPlot { position: relative; }
+.chartCanvas { height: 370px; width: 100%; }
+.chartKeys {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.chartKeys strong { margin-right: 5px; font-weight: 600; }
+.chartKeys button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: var(--line-color);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.chartKeys button::before { content: ''; width: 12px; border-top: 3px solid currentColor; }
+.chartKeys button[aria-pressed='false'] { color: #657487; text-decoration: line-through; }
+.chartKeys button[aria-pressed='false']::before { border-top-style: dotted; }
+.chartKeys button:focus-visible { outline: 2px solid currentColor; }
+.chartRsiKeys { position: absolute; top: 48%; left: 0; }

@@ -1,4 +1,8 @@
-export interface Holding {
+export const maFields = ['ma5', 'ma10', 'ma20'] as const
+export type MAField = (typeof maFields)[number]
+type MovingAverages = Record<MAField, number | null>
+
+export interface Holding extends MovingAverages {
   security_name?: string | null
   price?: number | null
   currency?: string
@@ -22,7 +26,7 @@ export interface Holding {
   rsi12: number | null
   rsi24: number | null
 }
-export interface Bar {
+export interface Bar extends MovingAverages {
   bar_date: string
   open: number
   high: number
@@ -169,12 +173,12 @@ export function timeText(value: string | null | undefined) {
   }).format(date)
 }
 export function sourceName(provider: string | null) {
-  return provider === 'hithink' ? '同花顺' : provider === 'akshare-b' ? 'AKShare · 新浪' : provider || '—'
+  return provider === 'hithink' ? '同花顺' : provider === 'akshare-b' ? '新浪 B 股' : provider ? '其他行情源' : '—'
 }
 export function ruleText(code: string) {
   return (
     (
-      { RSI_OVERBOUGHT_CROSS: 'RSI6 上破超买阈值', RSI_HIGH_DEATH_CROSS: 'RSI6 高位下穿 RSI12' } as Record<
+      { RSI_OVERBOUGHT_CROSS: '6日强弱指标上穿超买线', RSI_HIGH_DEATH_CROSS: '6日强弱指标在高位下穿12日线' } as Record<
         string,
         string
       >

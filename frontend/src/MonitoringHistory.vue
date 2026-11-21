@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { deliveryText, reasonText } from './display'
 import { onMounted, ref, watch } from 'vue'
 import { api, ruleText, timeText, type Signal } from './api'
 const props = defineProps<{ signals: Signal[]; revision: number }>()
@@ -39,10 +40,10 @@ watch(() => props.revision, load)
   </template>
   <template v-else-if="tab==='每日简报'">
     <p v-if="!history.briefings.length" class="mutedText">首份交易日简报生成后在这里查看。</p>
-    <details v-for="b in history.briefings" :key="b.id" class="panel side"><summary>{{ b.trade_date }} · {{ label[b.delivery_status] || b.delivery_status }}</summary><pre class="briefBody">{{ b.body }}</pre></details>
+    <details v-for="b in history.briefings" :key="b.id" class="panel side"><summary>{{ b.trade_date }} · {{ deliveryText(b.delivery_status) }}</summary><pre class="briefBody">{{ b.body }}</pre></details>
   </template>
   <template v-else>
     <p v-if="!history.deliveries.length" class="mutedText">暂无投递记录。</p>
-    <article v-for="d in history.deliveries" :key="d.id" class="panel side"><strong>{{ d.title || '风险提醒' }}</strong><p>{{ label[d.status] || d.status }} · {{ timeText(d.created_at) }}</p><small v-if="d.reason">{{ d.reason }}</small></article>
+    <article v-for="d in history.deliveries" :key="d.id" class="panel side"><strong>{{ d.title || '风险提醒' }}</strong><p>{{ deliveryText(d.status) }} · {{ timeText(d.created_at) }}</p><small v-if="d.reason">{{ reasonText(d.reason) }}</small></article>
   </template>
 </template>
