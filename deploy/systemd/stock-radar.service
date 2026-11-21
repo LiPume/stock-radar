@@ -1,0 +1,28 @@
+[Unit]
+Description=Stock Radar private daily holdings monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=stockradar
+Group=stockradar
+WorkingDirectory=/srv/stock-radar
+Environment=HOME=/var/lib/stock-radar
+Environment=DATABASE_URL=sqlite:////var/lib/stock-radar/stock_radar.db
+Environment=ADMIN_PASSWORD_HASH_FILE=/var/lib/stock-radar/admin.hash
+Environment=SCHEDULER_ENABLED=true
+EnvironmentFile=/etc/stock-radar/backend.env
+ExecStart=/srv/stock-radar/.venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8765 --workers 1
+Restart=on-failure
+RestartSec=5s
+StateDirectory=stock-radar
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

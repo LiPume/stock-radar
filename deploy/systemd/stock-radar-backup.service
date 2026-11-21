@@ -1,0 +1,18 @@
+[Unit]
+Description=Snapshot and verify the Stock Radar SQLite database
+After=stock-radar.service
+
+[Service]
+Type=oneshot
+User=stockradar
+Group=stockradar
+WorkingDirectory=/srv/stock-radar
+ExecStart=/usr/bin/python3 -m deploy.systemd.backup
+StateDirectory=stock-radar
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=strict

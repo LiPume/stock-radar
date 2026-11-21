@@ -25,7 +25,7 @@ npm --prefix frontend run build
 
 ## 部署与验证
 
-GitHub Actions 运行 Python 单测及前端 lint、类型检查和构建，全部通过后发布 Pages。手机远程登录需要自有 HTTPS 后端以及仓库 Actions 变量 `VITE_API_BASE_URL`（完整 API 根地址，结尾为 `/api/v1`）。无后端地址时，公开站点说明连接状态并关闭密码输入。部署、CORS、备份和恢复步骤见[运维指南](docs/06_部署安全运维.md)，微信投递行为见[调度与通知](docs/调度与通知.md)。
+GitHub Actions 运行 Python 单测及前端 lint、类型检查和构建，全部通过后发布 Pages。正式主页默认连接香港 HTTPS API。迁往其他地址时，在仓库 Actions 变量 `VITE_API_BASE_URL` 设置完整 API 根地址（结尾为 `/api/v1`）并重新构建。部署、CORS、备份和恢复步骤见[运维指南](docs/06_部署安全运维.md)，微信投递行为见[调度与通知](docs/调度与通知.md)。
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
@@ -63,4 +63,4 @@ python scripts/market_probe.py --provider akshare-b --b 900901.SH --days 240
 也可用 `--provider all` 同时检测两类。默认报告写入 `reports/probe_result.json`（已被 Git 忽略）。
 
 
-[需求、设计与项目导览](docs/00_项目导览.md)
+[香港 ECS 部署与回退](docs/香港部署与回退.md) · [需求、设计与项目导览](docs/00_项目导览.md)

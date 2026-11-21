@@ -1,0 +1,20 @@
+{
+	default_sni 8.217.211.34
+}
+
+8.217.211.34 {
+	tls {
+		issuer acme https://acme-v02.api.letsencrypt.org/directory {
+			profile shortlived
+		}
+	}
+	handle /tls-check {
+		respond "Stock Radar TLS check" 200
+	}
+	handle /api/v1/* {
+		reverse_proxy 127.0.0.1:8765
+	}
+	handle {
+		respond 404
+	}
+}

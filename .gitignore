@@ -47,3 +47,6 @@ coverage/
 # Local execution notes
 /task_plan.md
 /notes.md
+
+# Local cloud SSH material (including extensionless keypairs)
+/backend/key/
