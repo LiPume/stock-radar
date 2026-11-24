@@ -26,6 +26,10 @@ export async function verifyChart(page, base) {
   const fixture = {
     'auth/login': { access_token: 'release-verification-fixture' },
     health: {status:'ok'}, holdings, signals: [],
+    history: { transitions: [{ id:1, symbol:holding.symbol, stage:'CLEARED',
+      rule_code:'RSI_HIGH_DEATH_CROSS', created_at:'2025-11-20T10:30:00+08:00',
+      evidence:{prev_rsi6:83,rsi6:77,prev_rsi12:78,rsi12:79} }],
+      briefings:[], deliveries:[] },
     'system/status': { latest_run: null, sources: {}, scheduler_enabled: false },
     settings: { high_level:70, overbought:80, interval_minutes:30, brief_time:'14:30', api_daily_limit:30, message_daily_limit:5 },
     ['stocks/' + holding.symbol + '/bars']: bars,
@@ -71,6 +75,7 @@ export async function verifyChart(page, base) {
   assert.deepEqual(await card.locator('.quoteMeans b').allTextContents(), ['ma5','ma10','ma20'].map(k=>holding[k].toFixed(2)))
   await card.click()
   await page.getByRole('heading',{level:1,name:holding.security_name,exact:true}).waitFor()
+  await page.getByText('盘中信号解除', {exact:false}).waitFor()
   const chart = page.locator('.chart')
   const ranges = chart.getByRole('group', {name:'图表区间（交易日）'})
   const range = n => ranges.getByRole('button', {name:'近' + n + '日', exact:true})
