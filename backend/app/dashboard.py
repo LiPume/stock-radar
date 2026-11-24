@@ -15,7 +15,7 @@ def quote_fields(session, row, data: dict, now: datetime) -> None:
     data.update(list(bar_averages(reversed(bars)))[-1] if bars else {f"ma{n}": None for n in PERIODS})
     data.update(security_name=verified_name(row.symbol), price=None, change_pct=None,
                 currency=currency_for(row.symbol, row.market), quote_time=None,
-                batch_time=None,
+                batch_time=None, detected_at=row.fetched_at,
                 price_context="CLOSE", close_date=close.bar_date if close else None,
                 monitoring_mode="INTRADAY" if intraday_ready else "CLOSE_ONLY",
                 monitoring_note=None if intraday_ready else "该股票盘中行情尚待验证，仅显示最近有效收盘数据")

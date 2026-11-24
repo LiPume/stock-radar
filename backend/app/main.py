@@ -327,7 +327,8 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
             })
 
     @api.get("/history")
-    def monitor_history(request: Request, limit: int = Query(default=30, ge=1, le=100)):
+    def monitor_history(request: Request, limit: int = Query(default=30, ge=1, le=100),
+                        symbol: str | None = None):
         from .db import DailyBrief, RiskTransition
         with request.app.state.db.sessions() as session:
             def recent(model):
@@ -337,7 +338,10 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
             for item in briefs:
                 delivery = session.scalar(select(Delivery).where(Delivery.run_id == item["run_id"]))
                 item["delivery_status"] = delivery.status if delivery else "PENDING"
-            transitions = session.scalars(select(RiskTransition).order_by(RiskTransition.id.desc()).limit(limit))
+            query = select(RiskTransition)
+            if symbol:
+                query = query.where(RiskTransition.symbol == symbol)
+            transitions = session.scalars(query.order_by(RiskTransition.id.desc()).limit(limit))
             return envelope(request, {"transitions": [named_record(r) for r in transitions],
                                       "briefings": briefs, "deliveries": recent(Delivery)})
 

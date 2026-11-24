@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from fastapi.testclient import TestClient
 
-from backend.app.db import CheckRun, DailyBar, Holding, IntradayReading
+from backend.app.db import CheckRun, DailyBar, Holding, IntradayReading, RiskTransition
 from backend.app.main import create_app
 from scripts.market_probe import SHANGHAI
 
@@ -48,6 +48,20 @@ class DashboardTest(unittest.TestCase):
         self.client.put(url, headers=self.headers, json={**legacy,"brief_time":"13:45","interval_minutes":60}).raise_for_status()
         updated = self.client.put(url, headers=self.headers, json=legacy).json()["data"]
         self.assertEqual((updated["brief_time"],updated["interval_minutes"]), ("13:45",60))
+
+    def test_detail_history_filters_transitions_by_stock(self):
+        with self.app.state.db.sessions.begin() as s:
+            run = CheckRun(trigger_type="intraday")
+            first = Holding(symbol="600000.SH", market="A")
+            second = Holding(symbol="600001.SH", market="A")
+            s.add_all([run, first, second]); s.flush()
+            for h in (first, second):
+                s.add(RiskTransition(run_id=run.id, holding_id=h.id, symbol=h.symbol,
+                    trade_date="2026-11-20", rule_code="RSI_HIGH_DEATH_CROSS", severity="ALERT",
+                    stage="PROVISIONAL", evidence={"rsi6": 77}, created_at="2026-11-20T10:00:00+08:00"))
+        response = self.client.get("/api/v1/history?symbol=600000.SH", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([r["symbol"] for r in response.json()["data"]["transitions"]], ["600000.SH"])
 
     def test_intraday_error_shows_dated_close_and_never_ok(self):
         with self.app.state.db.sessions.begin() as s:

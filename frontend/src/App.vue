@@ -24,6 +24,17 @@ import {
   type Health,
   type Settings,
 } from './api'
+interface DetailTransition {
+  id: number
+  symbol: string
+  stage: 'PROVISIONAL' | 'CLEARED' | 'CONFIRMED'
+  rule_code: string
+  created_at: string
+  evidence: Record<string, unknown>
+}
+const transitionLabels: Record<DetailTransition['stage'], string> = {
+  PROVISIONAL: '盘中暂定', CLEARED: '盘中信号解除', CONFIRMED: '收盘确认',
+}
 const StockChart = defineAsyncComponent(() => import('./StockChart.vue'))
 const signed = ref(false),
   sessionMessage = ref(''),
@@ -41,6 +52,7 @@ const settings = ref<Settings | null>(null),
   settingsDraft = ref<Settings | null>(null)
 const detailBars = ref<Bar[]>([]),
   detailSignals = ref<Signal[]>([]),
+  detailTransitions = ref<DetailTransition[]>([]),
   detailBusy = ref(false),
   detailError = ref('')
 const formOpen = ref(false),
@@ -114,6 +126,7 @@ function logout(message = '') {
   settingsDraft.value = null
   detailBars.value = []
   detailSignals.value = []
+  detailTransitions.value = []
   formOpen.value = false
   editing.value = null
   checking.value = false
@@ -196,17 +209,20 @@ async function loadDetail() {
     version = ++detailVersion
   detailBars.value = []
   detailSignals.value = []
+  detailTransitions.value = []
   detailError.value = ''
   if (!h) return
   detailBusy.value = true
   try {
-    const [bars, items] = await Promise.all([
+    const [bars, items, history] = await Promise.all([
       api<Bar[]>('/stocks/' + encodeURIComponent(h.symbol) + '/bars?days=120'),
       api<Signal[]>('/signals?symbol=' + encodeURIComponent(h.symbol) + '&limit=100'),
+      api<{ transitions: DetailTransition[] }>('/history?symbol=' + encodeURIComponent(h.symbol) + '&limit=100'),
     ])
     if (version === detailVersion && signed.value) {
       detailBars.value = bars
       detailSignals.value = items
+      detailTransitions.value = history.transitions
     }
   } catch (e) {
     if (version === detailVersion) detailError.value = (e as Error).message
@@ -497,7 +513,12 @@ onBeforeUnmount(() => {
           <p v-else class="panel side mutedText">尚无已校验日线，可在总览发起检测。</p>
           <section class="panel side">
             <h2>信号历史</h2>
-            <p v-if="!detailSignals.length && !detailBusy && !detailError" class="mutedText">暂无信号记录</p>
+            <p v-if="!detailSignals.length && !detailTransitions.length && !detailBusy && !detailError" class="mutedText">暂无信号记录</p>
+            <div v-for="event in detailTransitions" :key="'transition-' + event.id" class="historyRow">
+              <strong>{{ transitionLabels[event.stage] }} · {{ ruleText(event.rule_code) }}</strong>
+              <small>{{ timeText(event.created_at) }}</small>
+              <p>{{ fmtEvidence(event.evidence) }}</p>
+            </div>
             <div
               v-for="s in detailSignals"
               :key="s.bar_date + s.rule_code + s.strategy_version"
