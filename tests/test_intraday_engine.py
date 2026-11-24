@@ -79,6 +79,13 @@ class IntradayEngineTest(unittest.TestCase):
         self.assertEqual(plan_status(self.db,self.now.replace(day=21))["planned_today"],0)
         self.assertIsNone(plan_status(self.db,self.now.replace(year=2028))["next_scan_at"])
 
+    def test_pending_close_retry_is_next_automatic_scan(self):
+        with self.db.sessions.begin() as session:
+            session.get(Holding, 1).data_status = "STALE"
+        at = self.now.replace(hour=16, minute=0)
+        self.assertEqual(plan_status(self.db, at)["next_scan_at"],
+                         "2026-11-20T16:15:00+08:00")
+
     def test_correct_daily_cross_lifecycle_and_close_confirmation(self):
         self.price=21.
         self.finish_manual()

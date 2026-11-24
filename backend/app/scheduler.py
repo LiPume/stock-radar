@@ -54,6 +54,7 @@ def plan_status(db, now: datetime) -> dict:
     from .db import Holding
     with db.sessions() as session:
         holdings = session.query(Holding).filter(Holding.enabled, ~Holding.deleted).all()
+    retry_pending = any(h.data_status == "STALE" for h in holdings)
     verified_count = sum(symbol_intraday_validated(h.symbol, h.market) for h in holdings)
     verified = verified_count > 0
     if prefs.intraday_enabled and verified:
@@ -72,10 +73,11 @@ def plan_status(db, now: datetime) -> dict:
             break
         if not trading:
             continue
+        day_minutes = minutes | ({16 * 60 + 15, 16 * 60 + 45} if offset == 0 and retry_pending else set())
         if offset == 0:
-            planned_today = len(minutes)
+            planned_today = len(day_minutes)
         midnight = datetime.combine(day, time(), SHANGHAI)
-        for m in sorted(minutes):
+        for m in sorted(day_minutes):
             dt = midnight + timedelta(minutes=m)
             if dt > local:
                 if next_scan is None:
