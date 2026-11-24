@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { maFields, numberText, timeText, type Holding } from './api'
 const props = defineProps<{ holding: Holding }>()
 const quoteTime = computed(() => {
-  const time = props.holding.quote_time
+  const time = props.holding.quote_time || props.holding.batch_time
   return time?.length === 10 ? time : time ? timeText(time) : '尚无行情'
 })
 const phase = computed(() => {
@@ -18,7 +18,7 @@ const currency: Record<string, string> = { CNY: '元', USD: '美元', HKD: '港�
   <div class="quoteLine">
     <strong v-if="holding.price != null">{{ numberText(holding.price) }} {{ currency[holding.currency || ''] }}</strong>
     <span v-if="holding.change_pct != null">{{ holding.change_pct > 0 ? '+' : '' }}{{ numberText(holding.change_pct) }}%</span>
-    <small>{{ holding.monitoring_mode === 'CLOSE_ONLY' ? '仅收盘监控' : phase }} · {{ quoteTime }}</small>
+    <small>{{ holding.monitoring_mode === 'CLOSE_ONLY' ? '仅收盘监控' : '盘中监控 · ' + phase }} · {{ holding.price_context === 'INTRADAY' ? (holding.quote_time ? '逐股时间' : '批次更新') : '行情日期' }} {{ quoteTime }}</small>
   </div>
   <div class="quoteMeans" :aria-label="phase + '移动均线'">
     <small>{{ holding.price_context === 'INTRADAY' ? '盘中均线' : '收盘均线' }}</small>

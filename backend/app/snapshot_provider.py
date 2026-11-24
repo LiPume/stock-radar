@@ -33,10 +33,12 @@ def fetch_json(path, params):
     except (OSError,HTTPException):
         raise RuntimeError("NETWORK_UNAVAILABLE: 行情服务连接失败") from None
     code = data.get("code") if isinstance(data,dict) else None
-    if type(code) is not int or not isinstance(data.get("data"),dict) and code==0:
-        raise ValueError("SCHEMA_CHANGED: 行情应答缺少业务码或数据")
+    if type(code) is not int:
+        raise ValueError("SCHEMA_CHANGED: 行情应答缺少业务码")
     if code:
         raise ProbeFailure(f"API_ERROR code={code}",api_code=code)
+    if not isinstance(data.get("data"),dict):
+        raise ValueError("SCHEMA_CHANGED: 行情应答缺少数据")
     return data["data"]
 
 
@@ -76,9 +78,8 @@ def unpack_a(data,symbols):
         result[symbol]=dict(provider="hithink", name=verified_name(symbol), currency="CNY",
             price=item.get("last_price"), prev_close=item.get("prev_price"), open=item.get("open_price"),
             high=item.get("high_price"), low=item.get("low_price"), change_pct=item.get("price_change_ratio_pct"),
-            quote_time=quote_time, batch_time=batch_time, adjustment_verified=False)
-        if quote_time is None:
-            result[symbol]["error"]="行情源未提供可核实的逐股交易时间"
+            quote_time=quote_time, batch_time=batch_time,
+            source_trade_date=item.get("trade_date"), volume=item.get("volume"), adjustment_verified=False)
     return result
 
 
@@ -136,7 +137,9 @@ def get_snapshots(db,stocks,now,priority, *, probe_b=False):
                         for symbol,row in rows.items():
                             stamp=row.get("quote_time")
                             received = meter.now + timedelta(seconds=monotonic() - started)
-                            if stamp and timedelta(0)<=received-datetime.fromisoformat(stamp)<=CACHE_AGE:
+                            batch = row.get("batch_time")
+                            evidence_time = stamp or batch
+                            if evidence_time and timedelta(0)<=received-datetime.fromisoformat(evidence_time)<=CACHE_AGE:
                                 try:
                                     row["adjustment_verified"]=adjustment_verified(meter,symbol)
                                 except (RuntimeError, ValueError, OSError) as exc:

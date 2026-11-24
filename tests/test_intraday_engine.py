@@ -113,6 +113,54 @@ class IntradayEngineTest(unittest.TestCase):
             self.assertEqual(s.scalar(select(func.count(DailyBar.id))),106)
         self.assertEqual(self.sender.call_count,2)
 
+    def test_batch_time_without_row_trade_time_and_stale_batch(self):
+        self.price = 21.
+        self.overrides = {"quote_time": None, "batch_time": self.now.isoformat(),
+                          "source_trade_date": self.now.date().isoformat(), "volume": 1000,
+                          "change_pct": 5.0}
+        rid = self.finish_manual()
+        with self.db.sessions() as s:
+            row = s.scalar(select(IntradayReading).where(IntradayReading.run_id == rid))
+            self.assertEqual(row.data_status, "OK")
+            self.assertIsNone(row.quote_time)
+            self.assertEqual(row.snapshot["time_basis"], "batch")
+            self.assertEqual(row.snapshot["batch_time"], self.now.isoformat())
+        self.now += timedelta(minutes=30)
+        rid = self.finish_manual()
+        with self.db.sessions() as s:
+            row = s.scalar(select(IntradayReading).where(IntradayReading.run_id == rid))
+            self.assertEqual(row.data_status, "DATA_UNAVAILABLE")
+            self.assertEqual(s.scalar(select(func.count(RiskTransition.id))), 1)
+
+    def test_symbol_approval_keeps_unverified_b_share_close_only(self):
+        with self.db.sessions.begin() as s:
+            s.add(Holding(symbol="900948.SH", market="B"))
+        with patch.dict(os.environ, {"INTRADAY_VALIDATED": "false",
+                                  "INTRADAY_VERIFIED_SYMBOLS": "600519.SH"}):
+            self.price = 21.
+            rid = self.finish_manual()
+            with self.db.sessions() as s:
+                rows = s.scalars(select(IntradayReading).where(IntradayReading.run_id == rid)
+                                 .order_by(IntradayReading.symbol)).all()
+                self.assertEqual([(r.symbol, r.data_status) for r in rows],
+                                 [("600519.SH", "OK"), ("900948.SH", "CLOSE_ONLY")])
+                self.assertEqual((s.get(CheckRun, rid).success_count, s.get(CheckRun, rid).error_count), (1, 0))
+            self.assertEqual(self.quotes.call_args.args[1], [("600519.SH", "A")])
+            self.assertEqual(plan_status(self.db, self.now)["intraday_count"], 1)
+
+    def test_unchanged_volume_for_trading_hour_marks_quote_stale(self):
+        self.price = 21.
+        self.overrides = {"volume": 1000, "batch_time": self.now.isoformat()}
+        self.finish_manual()
+        self.now += timedelta(hours=1)
+        self.overrides["batch_time"] = self.now.isoformat()
+        rid = self.finish_manual()
+        with self.db.sessions() as s:
+            row = s.scalar(select(IntradayReading).where(IntradayReading.run_id == rid))
+            self.assertEqual(row.data_status, "DATA_UNAVAILABLE")
+            self.assertIn("成交量", row.reason)
+            self.assertEqual(s.scalar(select(func.count(RiskTransition.id))), 1)
+
     def test_invalid_data_never_confirms_or_clears(self):
         self.price=21.
         self.finish_manual()
@@ -200,7 +248,7 @@ class IntradayEngineTest(unittest.TestCase):
             with self.db.sessions() as s:
                 self.assertEqual(s.scalar(select(func.count(DailyBrief.id))),1)
                 row=s.scalars(select(IntradayReading)).one()
-                self.assertEqual(row.data_status,"DATA_UNAVAILABLE")
+                self.assertEqual(row.data_status,"CLOSE_ONLY")
                 self.assertEqual(s.scalars(select(DailyBrief)).one().trade_date,"2026-11-20")
             self.quotes.assert_not_called()
             self.sender.assert_called_once()

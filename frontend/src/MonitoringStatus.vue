@@ -5,6 +5,8 @@ defineProps<{ health: Health }>()
 </script>
 <template>
   <template v-if="health.plan">
+    <div class="line"><span>当前交易时段</span><b>{{ health.plan.market_open ? '交易中' : '休市' }}</b></div>
+    <div class="line"><span>盘中 / 仅收盘监控</span><b>{{ health.plan.intraday_count }} / {{ health.plan.close_only_count }}</b></div>
     <div class="line"><span>下次自动检测</span><b>{{ health.scheduler_enabled && health.plan.next_scan_at ? timeText(health.plan.next_scan_at) : '暂无计划' }}</b></div>
     <div class="line"><span>下次简报</span><b>{{ health.scheduler_enabled && health.plan.next_brief_at ? timeText(health.plan.next_brief_at) : '暂无计划' }}</b></div>
     <div v-if="health.runs_today" class="line"><span>今日计划 / 实际（含手动）</span><b>{{ health.plan.planned_today }} / {{ health.runs_today.actual }}</b></div>

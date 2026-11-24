@@ -4,20 +4,21 @@ from sqlalchemy import func, select
 from .db import CheckRun, DailyBar, IntradayReading
 from .moving_averages import PERIODS, bar_averages, closing_bars, latest_averages
 from .securities import currency_for, verified_name
-from .scheduler import intraday_validated
+from .scheduler import symbol_intraday_validated
 
 
 def quote_fields(session, row, data: dict, now: datetime) -> None:
     today = now.date().isoformat()
-    intraday_ready = intraday_validated()
+    intraday_ready = row.enabled and symbol_intraday_validated(row.symbol, row.market)
     bars = session.scalars(closing_bars(row.symbol, row.market).where(DailyBar.bar_date <= today).limit(max(PERIODS))).all()
     close = bars[0] if bars else None
     data.update(list(bar_averages(reversed(bars)))[-1] if bars else {f"ma{n}": None for n in PERIODS})
     data.update(security_name=verified_name(row.symbol), price=None, change_pct=None,
                 currency=currency_for(row.symbol, row.market), quote_time=None,
+                batch_time=None,
                 price_context="CLOSE", close_date=close.bar_date if close else None,
                 monitoring_mode="INTRADAY" if intraday_ready else "CLOSE_ONLY",
-                monitoring_note=None if intraday_ready else "盘中行情尚待验证，当前仅显示最近有效收盘数据")
+                monitoring_note=None if intraday_ready else "该股票盘中行情尚待验证，仅显示最近有效收盘数据")
     data["close_rsi"] = {field: getattr(close, field, None) for field in ("rsi6", "rsi12", "rsi24")}
     if close:
         change = None
@@ -38,7 +39,8 @@ def quote_fields(session, row, data: dict, now: datetime) -> None:
         if reading.price is not None:
             data.update(latest_averages(session, row.symbol, row.market, day=today, provisional_price=reading.price))
         data.update(price_context="INTRADAY", price=reading.price, change_pct=reading.change_pct,
-                    quote_time=reading.quote_time, rsi6=reading.rsi6, rsi12=reading.rsi12,
+                    quote_time=reading.quote_time, batch_time=(reading.snapshot or {}).get("batch_time"),
+                    rsi6=reading.rsi6, rsi12=reading.rsi12,
                     rsi24=reading.rsi24, currency=reading.currency, provider=reading.provider)
     else:
         data.update(price_context="LAST_CLOSE", rsi6=None, rsi12=None, rsi24=None)

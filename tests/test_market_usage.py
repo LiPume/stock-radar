@@ -69,14 +69,18 @@ class MarketUsageTest(unittest.TestCase):
         symbols=[("600519.SH","A"),("000001.SZ","A")]
         data={"timestamp":int(self.now.timestamp()*1000),
               "item":[{"thscode":s,"last_price":20,"prev_price":19} for s,m in symbols]}
-        with patch.object(snapshots,"fetch_json",return_value=data) as get:
+        def response(path, params):
+            if path.endswith("adjustment-factors"):
+                return {"thscode":params["thscode"],"item":[{"ex_date_ms":int((self.now-timedelta(days=3)).timestamp()*1000)}]}
+            return data
+        with patch.object(snapshots,"fetch_json",side_effect=response) as get:
             first=snapshots.get_snapshots(self.db,symbols,self.now,"normal")
             second=snapshots.get_snapshots(self.db,symbols,self.now+timedelta(minutes=4),"normal")
             self.assertEqual(first,second)
-            self.assertEqual(get.call_count,1)
-            self.assertTrue(all(q["error"] and q["quote_time"] is None for q in second.values()))
+            self.assertEqual(sum(call.args[0].endswith("/snapshot") for call in get.call_args_list),1)
+            self.assertTrue(all(q["adjustment_verified"] and q["quote_time"] is None for q in second.values()))
             snapshots.get_snapshots(self.db,symbols,self.now+timedelta(minutes=5),"normal")
-            self.assertEqual(get.call_count,2)
+            self.assertEqual(sum(call.args[0].endswith("/snapshot") for call in get.call_args_list),2)
         one=snapshots.unpack_a({**data,"item":data['item'][:1]},[symbols[0][0]])[symbols[0][0]]
         self.assertIsNone(one["quote_time"])
         self.assertFalse(one["adjustment_verified"])
@@ -150,14 +154,14 @@ class MarketCertificationTest(unittest.TestCase):
         self.assertEqual(result["status"], "AWAITING_SESSION")
         fetch.assert_not_called()
 
-    def test_reference_requires_row_clock_terminal_price_and_all_three_rsi(self):
+    def test_reference_accepts_nearby_terminal_sample_and_requires_all_three_rsi(self):
         from scripts.verify_intraday_source import compare
         sb = "600519.SH"
         sample = dict(quote_time="2026-11-20T10:00:00+08:00",price=80.,rsi6=50.,rsi12=60.,rsi24=70.)
         report={"samples":{sb:sample}}
         terminal={**sample,"source":"独立行情终端"}
         self.assertEqual(compare(report,{sb:terminal})["status"],"MATCHED")
-        for changed in ({"rsi24":70.1},{"price":80.1},{"source":""},{"quote_time":"2026-11-20T10:00:06+08:00"},
+        for changed in ({"rsi24":70.6},{"price":80.5},{"source":""},{"quote_time":"2026-11-20T10:05:01+08:00"},
                         {"rsi6":float("nan")},{"quote_time":"2026-11-20T10:00:00"}):
             self.assertEqual(compare(report,{sb:{**terminal,**changed}})["status"],"INCOMPLETE")
         report["samples"][sb]["error"]="除权未核实"

@@ -420,7 +420,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div class="stockFoot">
-                <span>{{ sourceName(h.provider) }} · {{ h.bar_date || '尚无行情' }}</span
+                <span>{{ h.detected_at ? '检测 ' + timeText(h.detected_at) : sourceName(h.provider) + ' · ' + (h.bar_date || '尚无行情') }}</span
                 ><span>详情 <van-icon aria-hidden="true" name="arrow" /></span>
               </div>
             </a>
@@ -483,6 +483,7 @@ onBeforeUnmount(() => {
               行情日期 {{ detail.bar_date || '—' }} · {{ sourceName(detail.provider) }} · 取数
               {{ timeText(detail.fetched_at) }}
             </p>
+            <p v-if="detail.price_context === 'INTRADAY'" class="meta">盘中 RSI 为暂定值 · 检测 {{ timeText(detail.detected_at) }} · 上一正式收盘 RSI：{{ numberText(detail.close_rsi?.rsi6) }} / {{ numberText(detail.close_rsi?.rsi12) }} / {{ numberText(detail.close_rsi?.rsi24) }}</p>
             <p v-if="detail.notes">备注 · {{ detail.notes }}</p>
           </section>
           <p v-if="detailError" class="error" role="alert">

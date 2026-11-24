@@ -164,7 +164,7 @@ class BriefingTest(unittest.TestCase):
         with self.db.sessions() as s:
             report = s.scalars(select(DailyBrief)).one()
             self.assertEqual(len(report.items), 3)
-            self.assertTrue(all(item["status"] == "ERROR" for item in report.items))
+            self.assertTrue(all(item["status"] == "CLOSE_ONLY" for item in report.items))
             self.assertIn("2026-11-19", report.body)
             self.assertIn("1.02 美元", report.body)
             self.assertIn("5 / 10 / 20 日均价（美元）：0.96 / — / —", report.body)

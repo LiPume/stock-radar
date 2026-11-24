@@ -1,6 +1,7 @@
 """Shanghai exchange schedule. Intraday/brief settings take effect without restarting."""
 from datetime import datetime, time, timedelta
 import os
+import re
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from scripts.market_probe import SHANGHAI, is_trading_day
@@ -10,7 +11,22 @@ CLOSE_MINUTE = 15 * 60 + 45
 
 
 def intraday_validated() -> bool:
-    return os.getenv("INTRADAY_VALIDATED", "false").lower() in ("true", "1", "yes", "on")
+    return bool(verified_symbols()) or os.getenv("INTRADAY_VALIDATED", "false").lower() in ("true", "1", "yes", "on")
+
+
+def verified_symbols() -> set[str]:
+    """Explicit per-holding approval after live source, date and adjustment checks."""
+    raw = os.getenv("INTRADAY_VERIFIED_SYMBOLS", "")
+    return {symbol for part in raw.split(",") if (symbol := part.strip().upper())
+            and re.fullmatch(r"\d{6}\.(?:SH|SZ)", symbol)}
+
+
+def symbol_intraday_validated(symbol: str, market: str) -> bool:
+    approved = verified_symbols()
+    if approved:
+        return symbol in approved
+    # Compatibility for an existing explicitly validated A-share deployment.
+    return market == "A" and os.getenv("INTRADAY_VALIDATED", "false").lower() in ("true", "1", "yes", "on")
 
 
 def session_open(now: datetime) -> bool:
@@ -35,7 +51,11 @@ def plan_status(db, now: datetime) -> dict:
     with db.sessions() as session:
         prefs = session.get(Setting, 1)
     minutes = {CLOSE_MINUTE}
-    verified = intraday_validated()
+    from .db import Holding
+    with db.sessions() as session:
+        holdings = session.query(Holding).filter(Holding.enabled, ~Holding.deleted).all()
+    verified_count = sum(symbol_intraday_validated(h.symbol, h.market) for h in holdings)
+    verified = verified_count > 0
     if prefs.intraday_enabled and verified:
         minutes.update(scan_minutes(prefs.interval_minutes))
     report_minute = minute_of(prefs.brief_time) if prefs.brief_enabled else None
@@ -65,7 +85,9 @@ def plan_status(db, now: datetime) -> dict:
         if next_scan and (next_brief or report_minute is None):
             break
     return {"next_scan_at": next_scan, "next_brief_at": next_brief, "planned_today": planned_today,
-            "intraday_validated": verified}
+            "intraday_validated": verified, "intraday_count": verified_count,
+            "close_only_count": len(holdings) - verified_count,
+            "market_open": session_open(local) if local.year <= 2026 else False}
 
 
 def make_scheduler(service):

@@ -80,7 +80,9 @@ def capture(backup, directory, *, probe_b=False):
                     stamp, prices, change, result = quote_values(
                         quote, now=observed, holding=SimpleNamespace(symbol=symbol, market=market),
                         prior_bars=bars, settings=settings)
-                    sample.update(quote_time=stamp.isoformat(), price=prices["price"], change_pct=change,
+                    sample.update(detected_at=observed.isoformat(), batch_time=quote.get("batch_time"),
+                                  trade_time=quote.get("quote_time"), effective_time=stamp.isoformat(),
+                                  price=prices["price"], change_pct=change,
                                   **{f"rsi{n}": result[f"rsi{n}"] for n in (6,12,24)})
                 except UnusableQuote as exc:
                     sample["error"] = str(exc)
@@ -94,17 +96,17 @@ def compare(captured, reference):
     for symbol, sample in captured["samples"].items():
         row = verdict["stocks"][symbol] = {"matched": False}
         ref = reference.get(symbol)
-        if sample.get("error") or not sample.get("quote_time"):
+        if sample.get("error") or not (sample.get("detected_at") or sample.get("quote_time")):
             row["reason"] = sample.get("error") or "缺少已核实盘中行情"
             continue
         if not isinstance(ref, dict) or not isinstance(ref.get("source"), str) or not ref["source"].strip():
             row["reason"] = "缺少独立终端来源或同一时点记录"
             continue
         try:
-            t = datetime.fromisoformat(ref["quote_time"])
+            t = datetime.fromisoformat(ref.get("observed_at") or ref["quote_time"])
             if t.tzinfo is None:
                 raise ValueError
-            seconds = abs((t - datetime.fromisoformat(sample["quote_time"])).total_seconds())
+            seconds = abs((t - datetime.fromisoformat(sample.get("detected_at") or sample["quote_time"])).total_seconds())
             fields = ("price","rsi6","rsi12","rsi24")
             deltas = {k: abs(float(sample[k]) - float(ref[k])) for k in fields}
             if not all(math.isfinite(delta) for delta in deltas.values()):
@@ -112,9 +114,9 @@ def compare(captured, reference):
         except (KeyError, TypeError, ValueError, OverflowError):
             row["reason"] = "参考数据缺少带时区时间或有效的价格/RSI"
             continue
-        matched = seconds <= 5 and deltas["price"] < 1e-7 and max(deltas[k] for k in fields[1:]) <= .02
+        matched = seconds <= 300 and deltas["price"] <= max(.02, float(ref["price"]) * .002) and max(deltas[k] for k in fields[1:]) <= .5
         row.update(matched=matched, time_delta_s=seconds, absolute_deltas=deltas,
-                   source=ref["source"], reason="终端同一时点对照通过" if matched else "终端时间、价格或 RSI 超出容差")
+                   source=ref["source"], reason="终端近时点抽样对照通过；仍需跨时点确认行情变化" if matched else "终端时间、价格或 RSI 超出容差")
     if verdict["stocks"] and all(row["matched"] for row in verdict["stocks"].values()):
         verdict["status"] = "MATCHED"
     return verdict

@@ -8,6 +8,7 @@ from scripts.market_probe import SHANGHAI, is_trading_day
 from .db import DailyBar, DailyBrief, Delivery, Holding, IntradayReading, Setting
 from .securities import currency_for, verified_name
 from .moving_averages import closing_bars, latest_averages
+from .scheduler import symbol_intraday_validated
 
 SITE = "https://lipume.github.io/stock-radar/"
 BRIEF_TITLE = "【持仓雷达】每日持仓监控简报"
@@ -33,9 +34,10 @@ LABELS = {
     "ALERT": "重点预警",
     "WATCH": "超买关注",
     "ERROR": "数据异常",
+    "CLOSE_ONLY": "仅收盘监控",
     "NO_RULE_TRIGGERED": "未触发卖出风险规则",
 }
-ICONS = {"ALERT": "🚨", "WATCH": "⚠️", "ERROR": "❌", "NO_RULE_TRIGGERED": "✅"}
+ICONS = {"ALERT": "🚨", "WATCH": "⚠️", "ERROR": "❌", "CLOSE_ONLY": "🕒", "NO_RULE_TRIGGERED": "✅"}
 
 
 def notification_status(session, now: datetime) -> dict:
@@ -89,7 +91,7 @@ def _item(session, holding, reading, day):
         and reading.status in LABELS
         and reading.status != "ERROR"
         and reading.price is not None
-        and reading.quote_time
+        and (reading.quote_time or (reading.snapshot or {}).get("batch_time"))
         and all(getattr(reading, k) is not None for k in ("rsi6", "rsi12", "rsi24"))
     )
     if valid:
@@ -99,9 +101,12 @@ def _item(session, holding, reading, day):
             "currency": reading.currency or currency,
             "status": reading.status,
             "phase": "PROVISIONAL",
+            "monitoring_mode": "INTRADAY",
             **latest_averages(session, symbol, holding.market, day=day, provisional_price=reading.price),
             "price": reading.price,
             "quote_time": reading.quote_time,
+            "batch_time": (reading.snapshot or {}).get("batch_time"),
+            "detected_at": reading.observed_at,
             "change_pct": reading.change_pct,
             "rsi6": reading.rsi6,
             "rsi12": reading.rsi12,
@@ -113,17 +118,21 @@ def _item(session, holding, reading, day):
         .where(DailyBar.bar_date <= day, DailyBar.rsi24.is_not(None))
         .limit(1)
     )
-    reason = (reading.reason if reading else None) or "本轮缺少有效盘中行情"
+    mode = "INTRADAY" if symbol_intraday_validated(symbol, holding.market) else "CLOSE_ONLY"
+    reason = (reading.reason if reading else None) or ("本轮缺少有效盘中行情" if mode == "INTRADAY" else "仅收盘监控")
     return {
         "symbol": symbol,
         "name": name,
         "currency": currency,
-        "status": "ERROR",
+        "status": "ERROR" if mode == "INTRADAY" else "CLOSE_ONLY",
         "phase": "LAST_CLOSE",
+        "monitoring_mode": mode,
         **(latest_averages(session, symbol, holding.market, day=bar.bar_date) if bar else
            {"ma5": None, "ma10": None, "ma20": None}),
         "price": bar.close if bar else None,
         "quote_time": bar.bar_date if bar else None,
+        "batch_time": None,
+        "detected_at": reading.observed_at if reading else None,
         "change_pct": None,
         "rsi6": bar.rsi6 if bar else None,
         "rsi12": bar.rsi12 if bar else None,
@@ -144,25 +153,27 @@ def format_brief(items, now):
         status = item["status"]
         name = item["name"] or "名称待核实"
         lines.append(f"**{ICONS[status]} {name}（{item['symbol']}） · {LABELS[status]}**")
+        lines.append("监控模式：" + ("盘中监控" if item["monitoring_mode"] == "INTRADAY" else "仅收盘监控"))
         currency = CURRENCIES.get(item["currency"], "币种待核实")
         quote = number(item["price"]) + " " + currency
         stamp = str(item["quote_time"] or "无有效行情时间")
         rsi = " / ".join(number(item[k]) for k in ("rsi6", "rsi12", "rsi24"))
-        if status == "ERROR":
+        if status in ("ERROR", "CLOSE_ONLY"):
             lines.append(f"{readable_reason(item['reason'])}。最近正式日线 {stamp}，前复权收盘 {quote}；今日涨跌待核实。")
         else:
             change = "—" if item["change_pct"] is None else f"{item['change_pct']:+.2f}%"
-            lines.append(f"{quote} ｜ 今日 {change} ｜ 行情 {stamp}")
+            time_label = "逐股成交" if item["quote_time"] else "批次更新"
+            lines.append(f"{quote} ｜ 今日 {change} ｜ {time_label} {item['quote_time'] or item['batch_time']} ｜ 检测 {item['detected_at']}")
         lines.append(f"RSI（6 / 12 / 24 日）：{rsi}")
         averages = " / ".join(number(item.get(k)) for k in ("ma5", "ma10", "ma20"))
         lines.append(f"5 / 10 / 20 日均价（{currency}）：{averages}")
     focus = [i["symbol"] for i in items if i["status"] in ("WATCH", "ALERT")]
     conclusion = "关注 " + "、".join(focus) if focus else "本轮有效行情未触发卖出风险规则"
-    if counts["ERROR"] == len(items) and items:
+    if counts["ERROR"] + counts["CLOSE_ONLY"] == len(items) and items:
         conclusion = "本轮全部持仓均缺少有效盘中结果"
     if not items:
         conclusion = "当前没有启用监控的持仓"
-    lines.append(f"今日小结：{conclusion}；数据异常 {counts['ERROR']} 只。")
+    lines.append(f"今日小结：{conclusion}；数据异常 {counts['ERROR']} 只，仅收盘监控 {counts['CLOSE_ONLY']} 只。")
     lines.append(f"盘中结果为暂定判断，最终 RSI 以正式收盘日线为准。\n\n[查看持仓详情]({SITE})")
     return "\n\n".join(lines)
 

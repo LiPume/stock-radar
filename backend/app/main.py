@@ -316,7 +316,7 @@ def create_app(database_url: str | None = None, password_hash: str | None = None
         usage = usage_summary(db, now)
         with request.app.state.db.sessions() as session:
             return envelope(request, {
-                "version": "1.1", "plan": plan,
+                "version": "1.2", "plan": plan,
                 "runs_today": run_counts(session, now.date().isoformat()),
                 "sources": usage, "messages": notification_status(session, now),
                 "latest_run": record(session.scalar(select(CheckRun).order_by(CheckRun.id.desc()).limit(1))),

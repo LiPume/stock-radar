@@ -11,6 +11,8 @@ export interface Holding extends MovingAverages {
   monitoring_mode?: 'CLOSE_ONLY' | 'INTRADAY'
   monitoring_note?: string | null
   quote_time?: string | null
+  batch_time?: string | null
+  detected_at?: string | null
   close_rsi?: Record<'rsi6' | 'rsi12' | 'rsi24', number | null>
   id: number
   symbol: string
@@ -83,7 +85,7 @@ export interface SourceUsage {
 }
 export interface Health {
   version?: string
-  plan?: { planned_today: number; next_scan_at: string | null; next_brief_at: string | null; intraday_validated: boolean }
+  plan?: { planned_today: number; next_scan_at: string | null; next_brief_at: string | null; intraday_validated: boolean; intraday_count: number; close_only_count: number; market_open: boolean }
   runs_today?: { actual: number; success: number; failed: number; partial: number; running: number }
   sources?: Record<string, SourceUsage>
   messages?: { used: number; remaining: number; limit: number; brief_status: string }

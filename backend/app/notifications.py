@@ -112,11 +112,14 @@ def _evidence(event, name=None):
     name = name or verified_name(symbol)
     label = symbol if not name else f"{name}（{symbol}）"
     phase = "盘中暂定" if getattr(event, "stage", None) == "PROVISIONAL" else "收盘确认"
+    quote = ""
+    if values.get("price") is not None:
+        quote = f"\n检测时间：{values.get('detected_at', '—')}；最新价格：{number(values['price'])}；今日涨跌：{number(values.get('change_pct'))}%"
     pair6 = f"RSI6 {number(values.get('prev_rsi6'))} → {number(values.get('rsi6'))}"
     if event.severity == "ALERT":
         pair12 = f"RSI12 {number(values.get('prev_rsi12'))} → {number(values.get('rsi12'))}"
-        return f"{label} ｜ {phase} · 高位死叉\n{pair6}；{pair12}。RSI6 从高位下穿 RSI12。"
-    return f"{label} ｜ {phase} · 超买关注\n{pair6}，上破 {number(values.get('overbought', 80))}。"
+        return f"{label} ｜ {phase} · 高位死叉{quote}\n{pair6}；{pair12}；RSI24 {number(values.get('rsi24'))}。RSI6 从高位下穿 RSI12，请评估持仓风险。"
+    return f"{label} ｜ {phase} · 超买关注{quote}\n{pair6}，上破 {number(values.get('overbought', 80))}。"
 
 
 def _covered_in_brief(session, brief):
