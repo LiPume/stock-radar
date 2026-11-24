@@ -8,6 +8,8 @@ export interface Holding extends MovingAverages {
   currency?: string
   change_pct?: number | null
   price_context?: 'CLOSE' | 'INTRADAY' | 'LAST_CLOSE'
+  monitoring_mode?: 'CLOSE_ONLY' | 'INTRADAY'
+  monitoring_note?: string | null
   quote_time?: string | null
   close_rsi?: Record<'rsi6' | 'rsi12' | 'rsi24', number | null>
   id: number

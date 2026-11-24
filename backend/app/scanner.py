@@ -156,7 +156,7 @@ class ScanService:
                             return None
                 if trigger_type == "manual":
                     try:
-                        if session_open(now):
+                        if intraday_validated() and session_open(now):
                             trigger_type = "manual_intraday"
                     except ValueError:
                         pass  # Close scanner will record the calendar failure.

@@ -65,6 +65,7 @@ const alerts = computed(
   () => activeHolds.value.filter((h) => ['watch', 'alert'].includes(badge(h)[0])).length,
 )
 const failures = computed(() => activeHolds.value.filter((h) => badge(h)[0] === 'issue').length)
+const closeOnly = computed(() => health.value?.plan?.intraday_validated === false)
 let epoch = 0,
   syncVersion = 0,
   detailVersion = 0,
@@ -361,9 +362,13 @@ onBeforeUnmount(() => {
             </p>
           </div>
           <button class="primary" :disabled="checking || !activeHolds.length || !online" @click="check">
-            <van-icon aria-hidden="true" name="replay" :class="{ spin: checking }" />{{ checking ? '正在检测' : '立即检测' }}
+            <van-icon aria-hidden="true" name="replay" :class="{ spin: checking }" />{{ checking ? '正在检测' : closeOnly ? '刷新收盘数据' : '立即检测' }}
           </button>
         </div>
+        <p v-if="closeOnly" class="notice" role="status">
+          当前仅收盘监控。盘中更新尚待验证，刷新获取最近已收盘的数据。
+          <span v-if="health?.scheduler_enabled">交易日 15:45 自动检测。</span>
+        </p>
         <div class="summary">
           <div>
             <span><i class="dot blue"></i>监控持仓</span
@@ -466,6 +471,7 @@ onBeforeUnmount(() => {
           <section class="panel side detailTop">
             <span class="tag" :class="badge(detail)[0]">{{ badge(detail)[1] }}</span>
             <QuoteSummary :holding="detail" />
+            <p v-if="detail.monitoring_note" class="meta">{{ detail.monitoring_note }}</p>
             <p v-if="detail.reason">{{ reasonText(detail.reason) }}</p>
             <div class="readings">
               <div v-for="k in ['rsi6', 'rsi12', 'rsi24'] as const" :key="k">

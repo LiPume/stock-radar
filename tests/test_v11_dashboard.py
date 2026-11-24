@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from sqlalchemy import select
+
 from fastapi.testclient import TestClient
 
 from backend.app.db import CheckRun, DailyBar, Holding, IntradayReading
@@ -57,8 +59,38 @@ class DashboardTest(unittest.TestCase):
             s.add(IntradayReading(holding_id=h.id,symbol=h.symbol,run_id=run.id,trade_date="2026-11-20",
                     observed_at="2026-11-20T14:30:00+08:00", status="DATA_UNAVAILABLE",
                     data_status="DATA_UNAVAILABLE",reason="无有效快照",provider="hithink"))
-        with patch("backend.app.main.current_time", return_value=datetime(2026,11,20,14,31,tzinfo=SHANGHAI)):
+        with patch.dict("os.environ", {"INTRADAY_VALIDATED": "true"}), \
+             patch("backend.app.main.current_time", return_value=datetime(2026,11,20,14,31,tzinfo=SHANGHAI)):
             item = self.client.get("/api/v1/holdings",headers=self.headers).json()["data"][0]
         self.assertEqual((item["data_status"],item["price_context"],item["quote_time"],item["price"],item["rsi6"]),
                          ("DATA_UNAVAILABLE","LAST_CLOSE","2026-11-19",10.1,None))
         self.assertEqual(item["close_rsi"]["rsi6"], 59)
+
+    def test_close_only_preserves_close_health_and_old_intraday_failures(self):
+        with self.app.state.db.sessions.begin() as session:
+            holding = Holding(symbol="600000.SH", market="A", data_status="OK", status="NO_RULE_TRIGGERED",
+                              bar_date="2026-11-19", rsi6=59, rsi12=58, rsi24=57)
+            run = CheckRun(trigger_type="manual_intraday", state="FAILED", error_count=1)
+            session.add_all([holding, run])
+            session.flush()
+            session.add(DailyBar(symbol=holding.symbol, bar_date=holding.bar_date, provider="hithink", adjust="forward",
+                open=10, close=10.1, high=11, low=9, volume=5, fetched_at=holding.bar_date, rsi6=59, rsi12=58, rsi24=57))
+            session.add(IntradayReading(holding_id=holding.id, symbol=holding.symbol, run_id=run.id,
+                trade_date="2026-11-20", observed_at="2026-11-20T14:00:00+08:00", status="DATA_UNAVAILABLE",
+                data_status="DATA_UNAVAILABLE", reason="盘中行情权益、时效与复权验证尚未完成", provider="hithink"))
+        with patch.dict("os.environ", {"INTRADAY_VALIDATED": "false"}), \
+             patch("backend.app.main.current_time", return_value=datetime(2026,11,20,14,31,tzinfo=SHANGHAI)):
+            item = self.client.get("/api/v1/holdings", headers=self.headers).json()["data"][0]
+            self.assertEqual((item["data_status"], item["price_context"], item["quote_time"], item["rsi6"]),
+                             ("OK", "CLOSE", "2026-11-19", 59))
+            self.assertEqual(item["monitoring_mode"], "CLOSE_ONLY")
+            self.assertIn("仅显示最近有效收盘数据", item["monitoring_note"])
+            with self.app.state.db.sessions.begin() as session:
+                row = session.scalar(select(IntradayReading))
+                self.assertEqual(row.data_status, "DATA_UNAVAILABLE")
+                holding = session.scalar(select(Holding))
+                holding.data_status, holding.status, holding.reason = "STALE", "STALE", "STALE: 历史行情滞后"
+            item = self.client.get("/api/v1/holdings", headers=self.headers).json()["data"][0]
+            self.assertEqual((item["data_status"], item["price_context"], item["reason"]),
+                             ("STALE", "LAST_CLOSE", "STALE: 历史行情滞后"))
+            self.assertEqual(item["close_rsi"]["rsi6"], 59)

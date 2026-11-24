@@ -102,7 +102,8 @@ class MovingAverageTest(unittest.TestCase):
             self.load_prices(s, 10, symbol="900901.SH", market="B", multiplier=2)
         today = date.fromisoformat(self.dates[20])
         clock = datetime.combine(today, time(14, 30), SHANGHAI)
-        with patch("backend.app.main.current_time", return_value=clock):
+        with patch.dict("os.environ", {"INTRADAY_VALIDATED": "true"}), \
+             patch("backend.app.main.current_time", return_value=clock):
             def holdings():
                 items = self.client.get("/api/v1/holdings", headers=self.headers).json()["data"]
                 return {i["symbol"]:i for i in items}

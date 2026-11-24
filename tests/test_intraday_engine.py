@@ -173,6 +173,22 @@ class IntradayEngineTest(unittest.TestCase):
             self.assertEqual(prices["2026-11-20", "forward"], 11.)
             self.assertEqual(s.get(Holding, 1).rsi6, 100.)
 
+    def test_unvalidated_manual_refresh_uses_formal_close_scanner(self):
+        self.history.reset_mock()
+        with patch.dict(os.environ, {"INTRADAY_VALIDATED": "false"}):
+            run_id = self.finish_manual()
+        self.history.assert_called_once()
+        self.assertEqual(self.history.call_args.args[0], [("600519.SH", "A")])
+        self.assertEqual(self.history.call_args.args[2].isoformat(), "2026-11-19")
+        self.quotes.assert_not_called()
+        with self.db.sessions() as session:
+            run = session.get(CheckRun, run_id)
+            self.assertEqual((run.trigger_type, run.state, run.success_count, run.error_count),
+                             ("manual", "SUCCESS", 1, 0))
+            holding = session.get(Holding, 1)
+            self.assertEqual((holding.data_status, holding.bar_date, holding.rsi6), ("OK", "2026-11-19", 50))
+            self.assertEqual(session.scalar(select(func.count(IntradayReading.id))), 0)
+
     def test_default_gate_retains_daily_brief_without_outbound_fetch(self):
         with patch.dict(os.environ, {"INTRADAY_VALIDATED":"false"}):
             self.service.scheduled_tick("intraday_clock")
